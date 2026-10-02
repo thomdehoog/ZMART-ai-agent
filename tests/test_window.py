@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
 import zmart_controller
-from conftest import MOCK
+from mock_microscope import MOCK
 from PySide6.QtWidgets import QMessageBox
 from test_agent import MOCK_OPS, Script, position, saved_images
 

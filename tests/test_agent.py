@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import MOCK
+from mock_microscope import MOCK, mock_ops, plug_in_mock
 from pydantic_ai.messages import (
     BinaryContent,
     ModelResponse,
@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
-from zmart_controller import utils
 
 from zmart_ai_agent.agent import Assistant
 from zmart_ai_agent.eyes import Eyes, last_turns
@@ -121,7 +120,7 @@ def saved_images(microscope):
     )
 
 
-MOCK_OPS = utils.REGISTRY.get(tuple(MOCK.values()), {}).get("ops", {})
+MOCK_OPS = mock_ops() if plug_in_mock() else {}  # the driver's functions, to replace
 
 
 # -- connecting: the assistant learns the microscope from the controller -----------------

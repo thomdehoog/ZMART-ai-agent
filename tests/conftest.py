@@ -1,11 +1,9 @@
 """The mock microscope from ZMART-controller, plugged into the real controller.
 
 The tests drive the pretend microscope that ships with the controller
-(``tests/mock_zmart_driver`` in a clone of ZMART-controller), through the
-controller itself, exactly as the assistant drives a real microscope. The
-mock's folder is taken from ``ZMART_MOCK_DRIVER``, or from a ZMART-controller
-clone next to this repository. Without it, every test that needs a
-microscope is skipped and says why.
+(see ``mock_microscope.py`` for where it is found), through the controller itself,
+exactly as the assistant drives a real microscope. Without it, every test
+that needs a microscope is skipped and says why.
 
 Each test gets its own configuration folder and image folder, so no test
 ever writes to the computer's real ZMART configuration.
@@ -18,21 +16,10 @@ License: MIT
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
-import zmart_controller
+from mock_microscope import MOCK_DRIVER, mock_instrument, plug_in_mock
 
-HERE = Path(__file__).resolve().parent
-MOCK_DRIVER = Path(
-    os.environ.get("ZMART_MOCK_DRIVER")
-    or HERE.parent.parent / "ZMART-controller" / "tests" / "mock_zmart_driver"
-)
-MOCK = {"vendor": "mock", "microscope": "mock-scope", "api": "mock-api"}
-
-if MOCK_DRIVER.is_dir():
-    zmart_controller.register_driver(MOCK_DRIVER, remember=False)
+MOCK_AVAILABLE = plug_in_mock()
 
 
 @pytest.fixture(autouse=True)
@@ -43,16 +30,7 @@ def _config_in_a_temporary_folder(tmp_path, monkeypatch):
 
 @pytest.fixture
 def instrument(tmp_path) -> dict:
-    """The mock microscope as get_instruments lists it, made quick and given its own folder.
-
-    ``mock_timing`` and ``output_root`` are the mock's own connection entries:
-    moves and images finish at once, and images go to this test's folder.
-    """
-    if not MOCK_DRIVER.is_dir():
+    """The mock microscope, quick, saving its images in this test's own folder."""
+    if not MOCK_AVAILABLE:
         pytest.skip(f"the mock driver is not at {MOCK_DRIVER}; set ZMART_MOCK_DRIVER")
-    listed = next(
-        i
-        for i in zmart_controller.get_instruments()
-        if all(i[key] == value for key, value in MOCK.items())
-    )
-    return {**listed, "mock_timing": "instant", "output_root": str(tmp_path / "images")}
+    return mock_instrument(tmp_path / "images")
