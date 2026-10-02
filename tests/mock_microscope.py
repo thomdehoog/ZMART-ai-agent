@@ -59,6 +59,6 @@ def mock_ops() -> dict[str, Any]:
 
     The controller hands every session this very dictionary, so a test can
     replace one function here (and put it back) to make the driver answer
-    differently, without changing the assistant or the controller.
+    differently, without changing the agent or the controller.
     """
     return utils.REGISTRY[tuple(MOCK.values())]["ops"]

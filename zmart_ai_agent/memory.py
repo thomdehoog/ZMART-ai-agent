@@ -1,4 +1,4 @@
-"""The assistant's memory: the conversation made smaller now and then, and a
+"""The agent's memory: the conversation made smaller now and then, and a
 quoted state block taken out of a reply.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
@@ -47,7 +47,7 @@ def without_state_block(reply: str) -> str:
     here. The model's own copy in the history stays as it was, since editing
     an earlier answer would spoil the model's check on its earlier reasoning.
     """
-    return STATE_BLOCK.sub("", reply).strip() or "(The assistant gave no answer in words.)"
+    return STATE_BLOCK.sub("", reply).strip() or "(The agent gave no answer in words.)"
 
 
 def without_a_declined_challenge(messages: list[ModelMessage]) -> list[ModelMessage]:

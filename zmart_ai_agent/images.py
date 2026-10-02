@@ -1,6 +1,6 @@
 """Pictures for the model and the window: the saved files read back, their numbers, a PNG.
 
-The assistant never takes a picture itself. It asks the driver to acquire,
+The agent never takes a picture itself. It asks the driver to acquire,
 and the driver saves the image and answers with the paths of the files it
 wrote. ``read_saved`` reads those files back: OME-TIFF (one file, or one file
 per plane) and OME-Zarr (a folder holding a whole stack), the two formats
@@ -88,7 +88,7 @@ def _read_one(path: Path) -> np.ndarray:
     if name.endswith(".zarr") and path.is_dir():
         return _read_ome_zarr(path)
     raise ValueError(
-        f"cannot read {path.name}: the assistant reads OME-TIFF files and OME-Zarr folders"
+        f"cannot read {path.name}: the agent reads OME-TIFF files and OME-Zarr folders"
     )
 
 

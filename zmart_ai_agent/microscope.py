@@ -1,6 +1,6 @@
-"""The microscope, as the assistant holds it: a ZMART Controller session and what it learned.
+"""The microscope, as the agent holds it: a ZMART Controller session and what it learned.
 
-The assistant knows nothing about a microscope in advance. When it connects,
+The agent knows nothing about a microscope in advance. When it connects,
 it asks the controller's own commands what this microscope is and what it can
 do: ``get_info`` (the driver's description in plain words, and where images
 go), ``get_actuators`` and ``get_xyz`` (the axes, their motors and how far
@@ -8,7 +8,7 @@ they travel), ``get_state`` (the settings that can be changed, and the
 read-only report), ``get_acquisition_options`` and ``get_procedures``. From
 the answers it writes the "This microscope" section of the model's
 instructions (``instrument_section``). The controller is not shaped around
-the assistant: these are the calls every ZMART driver answers anyway.
+the agent: these are the calls every ZMART driver answers anyway.
 
 ``Microscope`` also holds the window's side of the conversation: where images
 and warnings go, the vision model, the schedules, the plans and the
@@ -41,7 +41,7 @@ from .instructions import INSTRUMENT_SECTION, NO_DESCRIPTION, NOT_CONNECTED, UNA
 from .schedules import Scheduler
 from .settings import CLOCK_FORMAT, MODEL
 
-# The commands the assistant learns a microscope from, in the order it asks them.
+# The commands the agent learns a microscope from, in the order it asks them.
 LEARNED_FROM = {
     "info": "get_info",
     "actuators": "get_actuators",
@@ -92,12 +92,12 @@ class Microscope:
     # move unasked.
     anchor: dict[str, float] | None = None
     turn: int = 0  # the operator's messages so far
-    # Long moves, routines and acquisitions the assistant asked the operator about, and when.
+    # Long moves, routines and acquisitions the agent asked the operator about, and when.
     go_ahead_asked: dict[str, int] = field(default_factory=dict)
     session: Session | None = field(default=None, repr=False)
     learned: dict[str, Any] | None = None  # the answers read at connect, by LEARNED_FROM key
     connect_error: str | None = None
-    # The assistant's thread and the window's both read the microscope; one call at a time.
+    # The agent's thread and the window's both read the microscope; one call at a time.
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     # -- the connection -------------------------------------------------------------------
@@ -232,7 +232,7 @@ class Microscope:
         self._eyes, self.vision_model = eyes, eyes.model
 
     def stop(self) -> None:
-        """Cancel the assistant's turn, end a running acquisition, and drop every schedule.
+        """Cancel the agent's turn, end a running acquisition, and drop every schedule.
 
         A running acquisition ends after the image being taken. A single move
         or image the driver has already started runs to its end: the ZMART

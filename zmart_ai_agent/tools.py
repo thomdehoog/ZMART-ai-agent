@@ -104,7 +104,7 @@ def answered(answer: dict[str, Any], **more: Any) -> dict[str, Any]:
 
 def needs_go_ahead(ctx: RunContext[Microscope], key: str, summary: str) -> dict | None:
     """None if the operator has had the chance to agree to this action; else the
-    answer that tells the assistant to ask first.
+    answer that tells the agent to ask first.
 
     The first request is only noted. The same request in the operator's next
     turn (after they read the question and replied) goes ahead. Whether the
@@ -123,7 +123,7 @@ def guarded_tool(fn: Callable) -> Callable:
     Before the tool runs: nothing runs after Cancel, and the window hears of
     each call as it starts. Afterwards: what the driver refuses (ValueError)
     becomes a refusal in the driver's own words, and any other error (the
-    microscope fails, a full disk) a failure the assistant can explain,
+    microscope fails, a full disk) a failure the agent can explain,
     instead of ending the turn with a crash. Pydantic AI's ModelRetry, which
     hands a malformed call back to the model, passes through unchanged.
     """
@@ -334,7 +334,7 @@ def focus(
     procedures = ctx.deps.read("get_procedures")
     focusing = [name for name in procedures if FOCUS_WORD in name.lower()]
     if not focusing:
-        message = "this microscope lists no focus procedure, so the assistant cannot focus it"
+        message = "this microscope lists no focus procedure, so the agent cannot focus it"
         return refusal(
             ctx, "not_available", message, NO_FOCUS_ADVICE, configured_options=list(procedures)
         )
@@ -404,7 +404,7 @@ async def look(ctx: RunContext[Microscope], question: str) -> dict[str, Any]:
     files = saved_files(answer.get("report"))
     try:
         image = read_saved(files)
-    except ValueError as exc:  # saved, but in a form the assistant cannot read
+    except ValueError as exc:  # saved, but in a form the agent cannot read
         error = {"code": "unreadable", "message": str(exc), "advice": FAILURE_ADVICE}
         return {"files": files, "error": error}
     stats = image_statistics(image)
@@ -450,7 +450,7 @@ async def describe_image(
 ) -> dict[str, Any]:
     """The measured numbers for an image and, when the model can see, its answer.
 
-    It runs on the assistant's own event loop: the vision model may be the very
+    It runs on the agent's own event loop: the vision model may be the very
     same client as the chat model, and a client must stay on one loop. A failing
     description is reported, not raised, so a finished acquisition is never
     turned into a failure by the describing afterwards.
@@ -566,7 +566,7 @@ async def run_acquisition(ctx: RunContext[Microscope], plan_id: str) -> dict[str
 
     run = Run(ctx.deps, plan, acquisition_type=f"{datetime.now():%Y%m%d_%H%M%S}_{plan_id}")
     # The run blocks for as long as the acquisition takes; a thread keeps the
-    # assistant's own event loop free, which the vision request below needs.
+    # agent's own event loop free, which the vision request below needs.
     await asyncio.to_thread(run.go)
     with contextlib.suppress(Exception):  # the microscope may be gone after an error
         ctx.deps.anchor = ctx.deps.position()
@@ -726,7 +726,7 @@ def cancel_schedule(ctx: RunContext[Microscope], name: str) -> dict[str, Any]:
 
 @guarded_tool
 def search_source(ctx: RunContext[Microscope], text: str) -> dict[str, Any]:
-    """Search the source code of this assistant, of the ZMART Controller and of
+    """Search the source code of this agent, of the ZMART Controller and of
     this microscope's driver for a word or phrase, to explain how something works.
 
     Returns matching lines as "file:line: text". When nothing matches, returns
@@ -752,7 +752,7 @@ def search_source(ctx: RunContext[Microscope], text: str) -> dict[str, Any]:
 def read_source(
     ctx: RunContext[Microscope], file: str, start_line: int = 1, lines: int = 80
 ) -> dict[str, Any]:
-    """Read part of a source file of this assistant, the controller or the driver,
+    """Read part of a source file of this agent, the controller or the driver,
     with line numbers.
 
     Args:
@@ -775,7 +775,7 @@ def read_source(
 
 
 def source_roots(microscope: Microscope) -> dict[str, Path]:
-    """The source the assistant may read: itself, the controller, and the connected
+    """The source the agent may read: itself, the controller, and the connected
     microscope's driver when the controller knows where it lives. Nothing else."""
     roots = {
         "zmart_ai_agent": Path(__file__).resolve().parent,
@@ -788,7 +788,7 @@ def source_roots(microscope: Microscope) -> dict[str, Path]:
 
 
 def source_files(microscope: Microscope) -> dict[str, Path]:
-    """The files the assistant may read, by name: "zmart_controller/session.py", ..."""
+    """The files the agent may read, by name: "zmart_controller/session.py", ..."""
     return {
         f"{label}/{path.relative_to(root).as_posix()}": path
         for label, root in source_roots(microscope).items()

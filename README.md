@@ -16,7 +16,7 @@ at the Center for Microscopy and Image Analysis (ZMB), University of Zurich.
 ## The Problem
 
 Driving a microscope from code means learning its software, its names for settings and its
-limits, and an assistant built for one microscope knows nothing about the next. A language model
+limits, and an agent built for one microscope knows nothing about the next. A language model
 can understand what an operator asks for, but left to itself it may guess at settings, act
 without asking, or claim to have done things it never did.
 
@@ -259,7 +259,7 @@ that shows whether a change made the agent better, or only fitted it to the case
 | `zmart_ai_agent/memory.py` | The conversation made smaller now and then. |
 | `zmart_ai_agent/models.py` | The ways to reach a model: a provider preset, an API key held in memory, the model object. |
 | `zmart_ai_agent/local.py` | A `.gguf` model file served on this computer by llama.cpp. |
-| `zmart_ai_agent/agent.py` | The assembly: the Agent with the tools and guards, and `Assistant`, one conversation. |
+| `zmart_ai_agent/agent.py` | The assembly: the Pydantic AI `Agent` with the tools and guards, and `Conversation`, one conversation with the microscope. |
 | `zmart_ai_agent/settings.py` | Every constant: the provider presets, go-ahead distances, memory sizes, window defaults. |
 | `zmart_ai_agent/window.py` | The chat window (`zmart-ai-agent`), with the Model panel from `panel.py`. |
 | `tests/evals.py` | The evaluation with a real model; `eval_cases.json` and `eval_cases_holdout.json`. |

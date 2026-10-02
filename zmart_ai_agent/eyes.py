@@ -1,6 +1,6 @@
 """The eyes: the vision model's own conversation for the session.
 
-Every image the assistant looks at is a turn in this conversation, with the
+Every image the agent looks at is a turn in this conversation, with the
 time it was taken, the microscope's settings and the measured numbers, so the
 eyes can compare the current image with earlier ones ("is it sharper than
 before?", "has the sample moved since the first image?") and can be asked

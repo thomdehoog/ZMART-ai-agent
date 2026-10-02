@@ -1,7 +1,7 @@
-"""A chat assistant that drives any microscope with a ZMART driver, through the ZMART Controller.
+"""An AI agent that drives any microscope with a ZMART driver, through the ZMART Controller.
 
-    zmart-ai-agent                                  # the window (a command)
-    from zmart_ai_agent.agent import Assistant      # the assistant, without the window
+    zmart-ai-agent                                     # the window (a command)
+    from zmart_ai_agent.agent import Conversation      # the agent, without the window
 
 It knows nothing about a microscope in advance: it learns each one from its
 ZMART driver when it connects.

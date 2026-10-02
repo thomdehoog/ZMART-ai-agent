@@ -1,4 +1,4 @@
-"""Every constant of the assistant, in one place.
+"""Every constant of the agent, in one place.
 
 The model's instructions and the advice it is given with a refusal are prose
 and stay in ``instructions.py``; the numbers and names that one might want to
@@ -6,7 +6,7 @@ change are all here. Times are seconds, distances micrometres.
 
 Nothing here describes a particular microscope. What a microscope can do,
 its travel range, its settings and its routines, comes from its ZMART driver
-when the assistant connects.
+when the agent connects.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -45,7 +45,7 @@ DEFAULT_PROVIDER = "Gemini"
 MODEL = "google:gemini-3.5-flash-lite"  # the model when no endpoint is chosen (tests, evals)
 # The short names Pydantic AI uses in a "provider:model" string, by provider preset.
 PREFIXES = {"google": "Gemini", "google-gla": "Gemini", "openai": "OpenAI"}
-# Sampling and retries for every model, cloud or local. An assistant that drives an
+# Sampling and retries for every model, cloud or local. An agent that drives an
 # instrument wants the most likely tool call, not a creative one, so the temperature
 # is 0.
 TEMPERATURE = 0.0
@@ -109,7 +109,7 @@ VISION_FRAMES_KEPT = 8
 VISION_TURNS_KEPT = 40
 
 # -- schedules ---------------------------------------------------------------------------
-# "Look every three minutes", "in ten minutes start the plan": the assistant sets a
+# "Look every three minutes", "in ten minutes start the plan": the agent sets a
 # schedule and the window's clock fires each due instruction as a turn of its own.
 SCHEDULE_MIN_SECONDS = 5  # no schedule fires more often than this
 SCHEDULES_MAX = 10

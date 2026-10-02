@@ -2,7 +2,7 @@
 
 The tests drive the pretend microscope that ships with the controller
 (see ``mock_microscope.py`` for where it is found), through the controller itself,
-exactly as the assistant drives a real microscope. Without it, every test
+exactly as the agent drives a real microscope. Without it, every test
 that needs a microscope is skipped and says why.
 
 Each test gets its own configuration folder and image folder, so no test

@@ -1,4 +1,4 @@
-"""What the assistant can plan, in what order it runs, and the plan in plain sentences.
+"""What the agent can plan, in what order it runs, and the plan in plain sentences.
 
 A plan is deliberately simple, because it has to mean the same on every
 microscope: positions, channels and time points, with one ``acquire`` for

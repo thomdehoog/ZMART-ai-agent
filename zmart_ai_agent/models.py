@@ -1,4 +1,4 @@
-"""Which model the assistant talks to, and how it is reached.
+"""Which model the agent talks to, and how it is reached.
 
 The chat window offers a few providers (``PROVIDERS`` in ``settings.py``).
 Choosing one fills in a sensible model name (and, for a server you run

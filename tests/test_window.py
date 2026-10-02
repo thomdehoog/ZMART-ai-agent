@@ -21,10 +21,10 @@ from PySide6.QtWidgets import QMessageBox
 from test_agent import MOCK_OPS, Script, position, saved_images
 
 from zmart_ai_agent import window as window_module
-from zmart_ai_agent.agent import Assistant
+from zmart_ai_agent.agent import Conversation
 from zmart_ai_agent.instructions import NO_DESCRIPTION
 from zmart_ai_agent.microscope import Microscope
-from zmart_ai_agent.window import AssistantWindow, pick_instrument
+from zmart_ai_agent.window import AgentWindow, pick_instrument
 
 
 @pytest.fixture
@@ -40,8 +40,8 @@ def open_window(qtbot, instrument):
             microscope.vision_model = Script(vision).model()
         else:
             microscope.vision = False  # no vision model: the look and run tools skip it
-        window = AssistantWindow(
-            Assistant(microscope, model=Script(*steps).model()), instruments=[instrument]
+        window = AgentWindow(
+            Conversation(microscope, model=Script(*steps).model()), instruments=[instrument]
         )
         # A failed test may leave a turn running; the window refuses to close then
         # (with a dialog nobody can click), so the turn is ended before the close.
@@ -92,7 +92,7 @@ def test_the_window_says_which_microscope_and_where_images_go(qtbot, open_window
     window = open_window()
     transcript = window.transcript.toPlainText()
     assert "Connected to mock / mock-scope / mock-api" in transcript
-    output_root = window.assistant.microscope.learned["info"]["output_root"]
+    output_root = window.conversation.microscope.learned["info"]["output_root"]
     assert output_root in transcript and NO_DESCRIPTION not in transcript
     assert window.instrument_box.currentText() == "mock / mock-scope / mock-api"
 
@@ -116,7 +116,7 @@ def test_choosing_and_connecting_a_microscope(qtbot, open_window):
     assert "Choose the microscope" in transcript and "not connected" in window.status.text()
     window.instrument_box.setCurrentIndex(0)
     window.connect_button.click()
-    assert window.assistant.microscope.session is not None
+    assert window.conversation.microscope.session is not None
     assert "Connected to mock / mock-scope / mock-api" in window.transcript.toPlainText()
     assert "x 0.0, y 0.0, z 0.0 um" in window.status.text()
 
@@ -130,7 +130,7 @@ def test_a_microscope_that_does_not_connect_says_why(qtbot, open_window, instrum
 def test_with_no_microscope_registered_the_window_says_how(qtbot, instrument, monkeypatch):
     monkeypatch.setattr(zmart_controller, "get_instruments", list)
     microscope = Microscope(None, vision=False)
-    window = AssistantWindow(Assistant(microscope, model=Script().model()))
+    window = AgentWindow(Conversation(microscope, model=Script().model()))
     qtbot.addWidget(window)
     assert "No microscope is registered" in window.transcript.toPlainText()
     assert window.instrument_box.count() == 0 and not window.connect_button.isEnabled()
@@ -151,12 +151,12 @@ def test_a_long_move_is_asked_about_in_the_chat(qtbot, open_window):
     window = open_window(long, "Shall I move 2 mm to x = 2 mm?", long, "We are at x 2 mm.")
     transcript = ask(qtbot, window, "go to x 2 mm")
     assert "Shall I move 2 mm to x = 2 mm?" in transcript
-    assert position(window.assistant.microscope)["x"] == 0.0
+    assert position(window.conversation.microscope)["x"] == 0.0
     assert "We are at x 2 mm." in ask(qtbot, window, "yes")
     assert "x 2000.0, y 0.0" in window.status.text()
 
 
-def test_cancel_prompt_stops_the_assistant(qtbot, open_window, monkeypatch):
+def test_cancel_prompt_stops_the_agent(qtbot, open_window, monkeypatch):
     monkeypatch.setitem(MOCK_OPS, "set_xyz", slowed("set_xyz", 0.3))  # time to press Cancel
     window = open_window(("move_stage", {"x": 100}), ("move_stage", {"x": 200}), "Stopped.")
     window.show_tools.setChecked(True)
@@ -164,7 +164,7 @@ def test_cancel_prompt_stops_the_assistant(qtbot, open_window, monkeypatch):
     qtbot.waitUntil(lambda: "move_stage" in window.transcript.toPlainText(), timeout=10000)
     window.cancel_button.click()
     qtbot.waitUntil(lambda: not window.busy, timeout=10000)
-    assert position(window.assistant.microscope)["x"] == 100.0  # the second move did not run
+    assert position(window.conversation.microscope)["x"] == 100.0  # the second move did not run
     assert "Cancelled." in window.transcript.toPlainText()
 
 
@@ -180,14 +180,16 @@ def test_clear_context_empties_the_chat_and_the_memory(qtbot, open_window):
     window = open_window("One.", "Two.")
     ask(qtbot, window, "good morning")
     window.clear_context()
-    assert "good morning" not in window.transcript.toPlainText() and window.assistant.history == []
+    assert (
+        "good morning" not in window.transcript.toPlainText() and window.conversation.history == []
+    )
 
 
 def test_a_limit_breach_shows_the_red_banner(qtbot, open_window):
     window = open_window(("move_stage", {"z": 2000}), "That is outside the limits.")
     ask(qtbot, window, "go to z 2 mm")
     assert window.warning.isVisibleTo(window) and "outside the range" in window.warning.text()
-    assert position(window.assistant.microscope)["z"] == 0.0
+    assert position(window.conversation.microscope)["z"] == 0.0
 
 
 def test_looking_fills_the_image_panel(qtbot, open_window):
@@ -212,11 +214,11 @@ def test_the_model_panel_folds_and_applies_a_choice(qtbot, open_window, monkeypa
     panel.apply()
     assert "The model was not changed" in window.transcript.toPlainText()
     assert "GEMINI_API_KEY" in panel.note.text() and not panel.body.isHidden()
-    # with a key, the assistant talks to that model and the panel folds shut
+    # with a key, the agent talks to that model and the panel folds shut
     picker.key.setText("secret")
     panel.apply()
-    assert window.assistant.endpoint.provider == "Gemini"
-    assert type(window.assistant.model).__name__ == "GoogleModel"
+    assert window.conversation.endpoint.provider == "Gemini"
+    assert type(window.conversation.model).__name__ == "GoogleModel"
     assert "Gemini" in panel.summary.text() and panel.body.isHidden()
     assert "Talking to Gemini" in window.transcript.toPlainText()
     assert "secret" not in window.transcript.toPlainText()
@@ -249,7 +251,7 @@ def test_the_preferences_change_the_letters(qtbot, open_window):
 def test_a_due_schedule_waits_for_a_running_turn(qtbot, open_window, monkeypatch):
     window = open_window(("get_status", {}), "Slow status.", "Fired.")
     monkeypatch.setitem(MOCK_OPS, "get_xyz", slowed("get_xyz", 1.0))  # a slow turn
-    scheduler = window.assistant.microscope.scheduler
+    scheduler = window.conversation.microscope.scheduler
     scheduler.add("watch", "hello", every_seconds=60)
     scheduler.clock = lambda: time.time() + 61
     start(window, "status")  # a turn is running; the due schedule must wait
@@ -262,7 +264,7 @@ def test_a_due_schedule_waits_for_a_running_turn(qtbot, open_window, monkeypatch
 
 def test_a_failing_scheduled_turn_cancels_its_schedule(qtbot, open_window):
     window = open_window()  # an empty script: the model fails on the first call
-    scheduler = window.assistant.microscope.scheduler
+    scheduler = window.conversation.microscope.scheduler
     scheduler.add("watch", "look", every_seconds=60)
     scheduler.clock = lambda: time.time() + 61
     qtbot.waitUntil(lambda: "is cancelled" in window.transcript.toPlainText(), timeout=10000)
@@ -273,7 +275,7 @@ def test_a_due_schedule_runs_as_its_own_turn_and_stop_drops_it(qtbot, open_windo
     set_it = ("schedule", {"name": "watch", "instruction": "status", "every_seconds": 60})
     window = open_window(set_it, "Every minute.", ("get_status", {}), "Here is the status.")
     ask(qtbot, window, "status every minute")
-    scheduler = window.assistant.microscope.scheduler
+    scheduler = window.conversation.microscope.scheduler
     assert [s["name"] for s in scheduler.listing()] == ["watch"]
     scheduler.clock = lambda: time.time() + 61  # a minute passes
     qtbot.waitUntil(
@@ -306,14 +308,14 @@ def test_an_acquisition_runs_from_the_window_and_stop_ends_it(qtbot, open_window
     plan = {**PLAN, "time_points": 12}
     window = open_window(("plan_acquisition", plan), "Shall I start 12?", run, "Stopped early.")
     assert "Shall I start 12?" in ask(qtbot, window, "take 12 images")
-    microscope = window.assistant.microscope
+    microscope = window.conversation.microscope
     assert saved_images(microscope) == []  # nothing starts before the operator agrees
     start(window, "yes")
     qtbot.waitUntil(lambda: "t002" in window.caption.text(), timeout=10000)
     window.stop_button.click()
     qtbot.waitUntil(lambda: not window.busy, timeout=10000)
     transcript = window.transcript.toPlainText()
-    assert "Stop: the assistant is cancelled" in transcript and "Stopped early." in transcript
+    assert "Stop: the agent is cancelled" in transcript and "Stopped early." in transcript
     assert 3 <= len(saved_images(microscope)) < 12
 
 
@@ -346,15 +348,15 @@ def test_main_plugs_in_a_driver_for_the_session_and_picks_the_instrument(monkeyp
             return 0
 
     class FakeWindow:
-        def __init__(self, assistant, endpoint=None, instruments=None):
-            opened["microscope"] = assistant.microscope
+        def __init__(self, conversation, endpoint=None, instruments=None):
+            opened["microscope"] = conversation.microscope
 
         def show(self):
             pass
 
     registered = []
     monkeypatch.setattr(window_module, "QApplication", FakeApp)
-    monkeypatch.setattr(window_module, "AssistantWindow", FakeWindow)
+    monkeypatch.setattr(window_module, "AgentWindow", FakeWindow)
     monkeypatch.setattr(
         zmart_controller, "register_driver", lambda path, remember: registered.append(remember)
     )

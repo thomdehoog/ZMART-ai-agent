@@ -1,4 +1,4 @@
-"""A chat window for the microscope assistant.
+"""A chat window for the microscope agent.
 
     zmart-ai-agent
     zmart-ai-agent --instrument mock/mock-scope/mock-api
@@ -12,7 +12,7 @@ API key, a server you run yourself, or a model file on this computer). Left:
 the conversation and the buttons. Right: the latest image, the microscope
 status, and a red banner for anything refused. The divider between the two
 halves can be dragged. A clock in the window fires the schedules the
-assistant sets ("look every three minutes") as turns of their own.
+agent sets ("look every three minutes") as turns of their own.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import models
-from .agent import Assistant
+from .agent import Conversation
 from .images import as_png
 from .instructions import CHOOSE_STEPS, CONNECT_STEPS, REGISTER_STEPS, SCHEDULED_TURN
 from .local import CONTEXT_TOO_SMALL_HELP, CONTEXT_TOO_SMALL_SIGNS
@@ -61,7 +61,7 @@ from .panel import ModelPanel, PreferencesBox
 from .settings import DEFAULT_PROVIDER, FONT_POINTS
 
 # The colour of each voice in the transcript.
-COLOURS = {"you": "#1a5fb4", "assistant": "#26a269", "system": "#b00020", "scheduled": "#8a5a00"}
+COLOURS = {"you": "#1a5fb4", "agent": "#26a269", "system": "#b00020", "scheduled": "#8a5a00"}
 
 WELCOME = (
     "Hello. I can move the stage, change the microscope's settings, focus, look at the "
@@ -93,7 +93,7 @@ def pick_instrument(instruments: list[dict[str, Any]], wanted: str | None) -> di
 
 
 class _Signals(QObject):
-    """Carries results from the assistant's thread to the window's thread."""
+    """Carries results from the agent's thread to the window's thread."""
 
     reply = Signal(str)
     error = Signal(str)
@@ -102,19 +102,19 @@ class _Signals(QObject):
     tool = Signal(str, dict)
 
 
-class AssistantWindow(QMainWindow):
+class AgentWindow(QMainWindow):
     """The chat window. ``endpoint`` is the model to start with; None keeps the
-    assistant's own (a test passes one in that way) and leaves the panel to the operator.
+    conversation's own model (a test passes one in that way) and leaves the panel to the operator.
     ``instruments`` are the microscopes offered; by default those the controller lists."""
 
     def __init__(
         self,
-        assistant: Assistant,
+        conversation: Conversation,
         endpoint: models.Endpoint | None = None,
         instruments: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
-        self.assistant = assistant
+        self.conversation = conversation
         self.setWindowTitle("ZMART AI agent")
         self.resize(1200, 750)
 
@@ -124,7 +124,7 @@ class AssistantWindow(QMainWindow):
         self.signals.image.connect(self._show_image)
         self.signals.warning.connect(self._show_warning)
         self.signals.tool.connect(self._show_tool)
-        microscope = assistant.microscope
+        microscope = conversation.microscope
         microscope.on_image = self.signals.image.emit
         microscope.on_warning = self.signals.warning.emit
         microscope.on_tool = self.signals.tool.emit
@@ -153,7 +153,7 @@ class AssistantWindow(QMainWindow):
 
         # left: the conversation
         self.transcript = QTextBrowser()
-        self.prompt = QLineEdit(placeholderText="Ask the microscope assistant ...")
+        self.prompt = QLineEdit(placeholderText="Ask the microscope agent ...")
         self.prompt.returnPressed.connect(self.send)
         self.send_button = QPushButton("Send", clicked=self.send)
         self.stop_button = QPushButton("Stop microscope", clicked=self.stop_microscope)
@@ -218,7 +218,7 @@ class AssistantWindow(QMainWindow):
         self.splitter.setChildrenCollapsible(False)
         self.setCentralWidget(self.splitter)
 
-        self._say("assistant", WELCOME, escape=False)
+        self._say("agent", WELCOME, escape=False)
         if microscope.session is not None:
             self._say_connected()
         elif microscope.instrument is not None:
@@ -243,19 +243,19 @@ class AssistantWindow(QMainWindow):
         index = self.instrument_box.currentIndex()
         if self.busy or index < 0:
             return
-        microscope = self.assistant.microscope
+        microscope = self.conversation.microscope
         chosen = self.instruments[index]
         if microscope.instrument is not None and identity(microscope.instrument) != identity(
             chosen
         ):
-            self.assistant.clear()
+            self.conversation.clear()
             self._say("system", "Another microscope: the conversation starts afresh.")
         microscope.instrument = chosen
         self._connect()
         self._refresh_status()
 
     def _connect(self) -> None:
-        microscope = self.assistant.microscope
+        microscope = self.conversation.microscope
         try:
             microscope.connect()
         except Exception:
@@ -269,12 +269,12 @@ class AssistantWindow(QMainWindow):
 
     def _say_connected(self) -> None:
         """Which microscope, where its images go, and whether its driver describes it."""
-        microscope = self.assistant.microscope
+        microscope = self.conversation.microscope
         output_root = (microscope.learned.get("info") or {}).get("output_root", "(not given)")
         text = f"Connected to {microscope.name}. Images are saved by its driver in {output_root}."
         if not microscope.has_description:
             text += (
-                " Its driver gives no description of the microscope, so the assistant works "
+                " Its driver gives no description of the microscope, so the agent works "
                 "from its readings only: it knows the settings by name, but not what they mean."
             )
         self._say("system", text)
@@ -297,8 +297,8 @@ class AssistantWindow(QMainWindow):
         The chat is kept. The eyes start afresh when their model changes, since
         another model cannot read the images and answers of the old one.
         """
-        seen = self.assistant.microscope.eyes.frames
-        self.assistant.use(endpoint, vision)
+        seen = self.conversation.microscope.eyes.frames
+        self.conversation.use(endpoint, vision)
         note = (
             f" The eyes start afresh; the {seen} images seen so far are forgotten." if seen else ""
         )
@@ -310,7 +310,7 @@ class AssistantWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Still working",
-                "The assistant is still working on the microscope. Wait until it is done, "
+                "The agent is still working on the microscope. Wait until it is done, "
                 "or press Stop microscope, then close.",
             )
             event.ignore()
@@ -327,7 +327,7 @@ class AssistantWindow(QMainWindow):
         self.prompt.clear()
         self.warning.hide()
         self._say("you", text)
-        self._in_background(lambda: self.assistant.send(text))
+        self._in_background(lambda: self.conversation.send(text))
 
     def fire_due_schedule(self) -> None:
         """The window's clock calls this every second. When no turn is running and a
@@ -336,20 +336,20 @@ class AssistantWindow(QMainWindow):
         """
         if self.busy:
             return
-        item = self.assistant.microscope.scheduler.pop_due()
+        item = self.conversation.microscope.scheduler.pop_due()
         if item is None:
             return
         text = SCHEDULED_TURN.format(name=item["name"], instruction=item["instruction"])
         self.warning.hide()
         self._say("scheduled", text)
-        self._in_background(lambda: self.assistant.send(text, scheduled=True), item["name"])
+        self._in_background(lambda: self.conversation.send(text, scheduled=True), item["name"])
 
     @property
     def busy(self) -> bool:
         return not self.send_button.isEnabled()
 
     def _in_background(self, turn: Callable[[], str], schedule: str | None = None) -> None:
-        """Run one assistant turn off the window's thread, so the window stays responsive.
+        """Run one agent turn off the window's thread, so the window stays responsive.
 
         A turn that fails ends with its error in the transcript. When it was a
         scheduled turn, that schedule is cancelled too, or a schedule with a
@@ -361,15 +361,15 @@ class AssistantWindow(QMainWindow):
             try:
                 self.signals.reply.emit(turn())
             except Exception as exc:
-                text = _explain(exc, self.assistant.endpoint)
-                if schedule and self.assistant.microscope.scheduler.cancel(schedule):
+                text = _explain(exc, self.conversation.endpoint)
+                if schedule and self.conversation.microscope.scheduler.cancel(schedule):
                     text += f" The schedule '{schedule}' is cancelled."
                 self.signals.error.emit(text)
 
         threading.Thread(target=work, daemon=True).start()
 
     def _show_reply(self, text: str) -> None:
-        self._say("assistant", text)
+        self._say("agent", text)
         self._set_busy(False)
         self._refresh_status()
 
@@ -380,34 +380,34 @@ class AssistantWindow(QMainWindow):
     # -- the operator's say: Cancel prompt, Stop, Clear ---------------------------------
 
     def cancel_prompt(self) -> None:
-        """Stop the assistant, not the microscope: further tool calls in this turn do nothing.
+        """Stop the agent, not the microscope: further tool calls in this turn do nothing.
 
-        What the assistant already started (a move, an acquisition) runs on; Stop
+        What the agent already started (a move, an acquisition) runs on; Stop
         microscope ends an acquisition.
         """
         if not self.busy:
             return
-        self.assistant.microscope.cancel.set()
-        self._say("system", "Cancelled. The assistant stops after its current step.")
+        self.conversation.microscope.cancel.set()
+        self._say("system", "Cancelled. The agent stops after its current step.")
 
     def stop_microscope(self) -> None:
-        """Cancel the assistant, end a running acquisition after the current image, and
+        """Cancel the agent, end a running acquisition after the current image, and
         drop every schedule."""
-        self.assistant.microscope.stop()
+        self.conversation.microscope.stop()
         self._say(
             "system",
-            "Stop: the assistant is cancelled, a running acquisition ends after the "
+            "Stop: the agent is cancelled, a running acquisition ends after the "
             "current image, and every schedule is cancelled. A single move or image "
             "already under way finishes; use the microscope's own controls to stop it sooner.",
         )
 
     def clear_context(self) -> None:
-        """Forget the conversation, in the window and in the assistant's memory."""
+        """Forget the conversation, in the window and in the agent's memory."""
         if self.busy:
             return
-        self.assistant.clear()
+        self.conversation.clear()
         self.transcript.clear()
-        self._say("assistant", WELCOME, escape=False)
+        self._say("agent", WELCOME, escape=False)
 
     # -- the right-hand side ----------------------------------------------------------
 
@@ -435,7 +435,7 @@ class AssistantWindow(QMainWindow):
         self.warning.show()
 
     def _refresh_status(self) -> None:
-        microscope = self.assistant.microscope
+        microscope = self.conversation.microscope
         if microscope.session is None:
             self.status.setText(f"{microscope.name}: not connected")
             return
@@ -473,13 +473,13 @@ class AssistantWindow(QMainWindow):
 def _explain(exc: Exception, endpoint: models.Endpoint | None) -> str:
     """Turn a failure into a sentence for the operator."""
     if isinstance(exc, UnexpectedModelBehavior):  # e.g. the model declined to answer
-        return f"The assistant could not answer: {exc.message}"
+        return f"The agent could not answer: {exc.message}"
     text = f"{type(exc).__name__}: {exc}"
     lowered = text.lower()
     if any(sign in lowered for sign in ("api_key", "api key", "authentication", "401")):
         where = f" {endpoint.name}" if endpoint else ""
         advice = models.missing_key_advice(endpoint) if endpoint else "check the API key."
-        return f"The assistant could not reach the model{where}: {advice} ({text})"
+        return f"The agent could not reach the model{where}: {advice} ({text})"
     if any(sign in text for sign in CONTEXT_TOO_SMALL_SIGNS):
         return f"The model server refused the request. {CONTEXT_TOO_SMALL_HELP} ({text})"
     return f"Something went wrong: {text}"
@@ -532,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.model
         else models.Endpoint.from_preset(DEFAULT_PROVIDER)
     )
-    window = AssistantWindow(Assistant(microscope), endpoint=endpoint)
+    window = AgentWindow(Conversation(microscope), endpoint=endpoint)
     window.show()
     try:
         return app.exec()

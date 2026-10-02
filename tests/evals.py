@@ -1,4 +1,4 @@
-"""Behavioural evaluation of the microscope assistant with a real model.
+"""Behavioural evaluation of the microscope agent with a real model.
 
     python tests/evals.py --model google:gemini-3.5-flash-lite
     python tests/evals.py --model openai:gpt-5-mini --holdout --repeat 3
@@ -6,11 +6,11 @@
     python tests/evals.py --scoreboard evals-*.jsonl
 
 The unit tests check that the code does what it should. This checks something
-else: whether the assistant, with a given model and these instructions, does
+else: whether the agent, with a given model and these instructions, does
 what an operator expects. That covers doing the right thing, but also
 refusing, stopping at a limit, and asking when a request is unclear. Each case
 in eval_cases.json is a short conversation. It runs through the real
-assistant and the real ZMART Controller, with the mock microscope from
+agent and the real ZMART Controller, with the mock microscope from
 ZMART-controller behind it (see mock_microscope.py), and afterwards the case's
 expectations are checked against what happened. A language model decides, so
 a run costs API calls, and two runs can differ: --repeat shows which cases
@@ -23,7 +23,7 @@ cannot judge anything then.
 eval_cases_holdout.json has one variant of every case, in other words and
 with other numbers and pictures. Change the instructions while looking at
 eval_cases.json only, then check with --holdout. That shows whether a change
-made the assistant better, or only fitted it to the cases.
+made the agent better, or only fitted it to the cases.
 
 The API key comes from the provider's usual environment variable
 (GEMINI_API_KEY, OPENAI_API_KEY, ...). Each trace goes into a JSON-lines
@@ -59,7 +59,7 @@ Expectations:
                     planes those runs saved)
     state_not       {key: value}: the microscope afterwards must not be so
     confirm         true: a long move, routine or acquisition answered
-                    "needs_go_ahead", so the assistant had to ask first; false:
+                    "needs_go_ahead", so the agent had to ask first; false:
                     nothing needed that
     asks            the reply asks a question, and nothing was changed first
     no_mutations    only reading tools were called
@@ -68,7 +68,7 @@ Expectations:
                     word right after "not" or "no" does not count
 Every case also fails when a reply quotes the <microscope_state> block, or
 when one is the guard's word SAME (a reply meant for the guard, not the operator).
-The assistant runs with the window's reply guards on, as the operator meets it.
+The agent runs with the window's reply guards on, as the operator meets it.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -101,7 +101,7 @@ from mock_microscope import MOCK_DRIVER, mock_instrument, mock_ops, plug_in_mock
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 
 from zmart_ai_agent import models
-from zmart_ai_agent.agent import Assistant
+from zmart_ai_agent.agent import Conversation
 from zmart_ai_agent.images import read_saved
 from zmart_ai_agent.microscope import Microscope
 from zmart_ai_agent.settings import LOOK_TYPE, MODEL
@@ -211,7 +211,7 @@ def driver_as_the_case_says(setup: dict) -> Iterator[None]:
     """Make the mock driver answer as the case's setup says, and put it back afterwards.
 
     The changes are to the mock's own functions, as the controller holds them,
-    so the assistant and the controller run unchanged: only the pretend
+    so the agent and the controller run unchanged: only the pretend
     microscope pretends differently.
     """
     ops = mock_ops()
@@ -290,7 +290,7 @@ def run_case(
     scripted model that does not expect the challenge runs with it off.
 
     A provider error (a rate limit, an outage) is tried again after a wait: the
-    evaluation is about the assistant's behaviour, not the provider's uptime.
+    evaluation is about the agent's behaviour, not the provider's uptime.
     """
     run = (case, model, vision_model or model, challenge_no_tool, model_settings, label)
     trace = _run_once(*run)
@@ -326,13 +326,13 @@ def _run_once(
                 microscope.call("set_xyz", where["x"], where["y"], where["z"])
             if "settings" in setup:
                 microscope.call("set_state", {"changeable": setup["settings"]})
-            assistant = Assistant(microscope, model=model, model_settings=model_settings)
+            conversation = Conversation(microscope, model=model, model_settings=model_settings)
             for turn, prompt in enumerate(prompts_of(case), start=1):
                 try:
-                    replies.append(assistant.send(prompt))
+                    replies.append(conversation.send(prompt))
                 finally:  # also the tools of a turn that failed half-way
-                    tools += [{**call, "turn": turn} for call in tool_calls(assistant.last_turn)]
-                    assistant.last_turn = []
+                    tools += [{**call, "turn": turn} for call in tool_calls(conversation.last_turn)]
+                    conversation.last_turn = []
             state = {**microscope.position(), **microscope.read("get_state")["changeable"]}
         except Exception as exc:
             error, state = f"{type(exc).__name__}: {exc}", {}

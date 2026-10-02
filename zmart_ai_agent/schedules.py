@@ -1,7 +1,7 @@
 """Schedules: an instruction carried out later, as if the operator typed it then.
 
 "Look every three minutes", "in ten minutes start the plan", "at 15:00 switch
-the light off": the assistant's ``schedule`` tool adds a named schedule here, and
+the light off": the agent's ``schedule`` tool adds a named schedule here, and
 the chat window's clock asks ``pop_due`` every second and sends each due
 instruction as an ordinary turn, marked as scheduled in the transcript. So a
 scheduled action goes through the same tools, checks and refusals as anything
@@ -9,7 +9,7 @@ typed, one at a time and never while a turn is running. The model cannot keep
 time; this does, and the microscope state carries the clock and the schedules
 so the model knows both.
 
-Two threads use it at once: the assistant's tools add and cancel schedules,
+Two threads use it at once: the agent's tools add and cancel schedules,
 and the window's clock pops the due one. A lock makes every change whole, so
 neither thread ever sees a half-changed list.
 

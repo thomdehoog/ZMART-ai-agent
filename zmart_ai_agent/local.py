@@ -1,9 +1,9 @@
-"""Serve a model file on this computer, so the assistant works without the internet.
+"""Serve a model file on this computer, so the agent works without the internet.
 
 A ``.gguf`` model file chosen in the window is served by llama.cpp's
 OpenAI-compatible server (the ``llama_cpp.server`` module of the
 ``llama-cpp-python`` package) as a child process that only listens on this
-computer. The assistant then talks to it exactly as it would to any other
+computer. The agent then talks to it exactly as it would to any other
 OpenAI-style server, so nothing in the agent depends on the runtime. The child
 lives while that model is in use: choosing another model or closing the window
 stops it.

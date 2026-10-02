@@ -88,7 +88,7 @@ class ModelPicker(QGroupBox):
         self.base_url.setMinimumWidth(160)
         self.sees = QCheckBox("Can see images")
         self.sees.setToolTip(
-            "Tick when this server's model can look at pictures, so the assistant "
+            "Tick when this server's model can look at pictures, so the agent "
             "shows it the camera image. Untick for a text-only model."
         )
         self.local_model = QComboBox()

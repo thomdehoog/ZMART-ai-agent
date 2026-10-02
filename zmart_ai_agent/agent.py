@@ -1,16 +1,16 @@
-"""The assistant, assembled: the Agent with its tools, and one conversation.
+"""The agent, assembled: the Pydantic AI ``Agent`` with its tools, and one conversation.
 
 Built on Pydantic AI. The tools (``tools.py``) are what the model can ask the
 microscope to do; the instructions are the generic part from
 ``instructions.py``, the same for every microscope, followed by the section
 about the connected microscope, which ``microscope.py`` writes from its
 driver's answers; the memory (``memory.py``) keeps a long conversation small;
-the models (``models.py``) are the ways to reach a model. ``Assistant`` is one
+the models (``models.py``) are the ways to reach a model. ``Conversation`` is one
 conversation: a message in, the answer out.
 
     microscope = Microscope(zmart_controller.get_instruments()[0])
-    assistant = Assistant(microscope)
-    print(assistant.send("Take a picture here and tell me what you see"))
+    conversation = Conversation(microscope)
+    print(conversation.send("Take a picture here and tell me what you see"))
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -52,8 +52,8 @@ def this_microscope(ctx: RunContext[Microscope]) -> str:
     return ctx.deps.instrument_section()
 
 
-class Assistant:
-    """A conversation with the microscope assistant. Not thread-safe: one turn at a time."""
+class Conversation:
+    """A conversation with the microscope agent. Not thread-safe: one turn at a time."""
 
     def __init__(
         self,
@@ -69,10 +69,10 @@ class Assistant:
         self.last_turn: list[ModelMessage] = []  # the latest turn's messages, for traces
 
     def send(self, text: str, scheduled: bool = False) -> str:
-        """One message in, the assistant's answer out.
+        """One message in, the agent's answer out.
 
         A message the operator typed starts a new turn of theirs: moves are
-        measured from where the stage is now, and a question the assistant
+        measured from where the stage is now, and a question the agent
         asked in the turn before counts as answered by this message. A
         ``scheduled`` message (the window sends one when a schedule falls due)
         does neither, so a repeating schedule cannot creep the stage along in

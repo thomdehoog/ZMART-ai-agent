@@ -2,12 +2,12 @@
 
 The instructions come in two parts. ``INSTRUCTIONS`` is generic: the same for
 every microscope, it says who the operator is, what the ZMART vocabulary is,
-and the safety rules. ``INSTRUMENT_SECTION`` is filled in when the assistant
+and the safety rules. ``INSTRUMENT_SECTION`` is filled in when the agent
 connects (see ``microscope.py``), from what the microscope's own driver
 answers: its description, its axes, its settings, its acquisition options
 and its routines. Nothing about a particular microscope is written here.
 
-Nothing here is code. Change the wording here to change how the assistant
+Nothing here is code. Change the wording here to change how the agent
 behaves, then check with the evaluation (tests/evals.py) that it still does.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
@@ -16,7 +16,7 @@ Date: 2026-10-02
 License: MIT
 """
 
-# What the assistant is told to do next, attached to each refusal or failure. It
+# What the agent is told to do next, attached to each refusal or failure. It
 # travels with the tool's answer because that is where the model reads it next.
 FAILURE_ADVICE = (
     "Tell the operator what went wrong and propose one fix as a question. "
@@ -77,7 +77,7 @@ SCHEDULED_TURN = "[scheduled '{name}'] {instruction}"
 # goes back to the model once with this text; a second such reply reaches the
 # operator as the fallback.
 EMPTY_REPLY_CHALLENGE = "Your reply is empty: tell the operator in a sentence what happened."
-EMPTY_REPLY_FALLBACK = "(The assistant gave no answer in words.)"
+EMPTY_REPLY_FALLBACK = "(The agent gave no answer in words.)"
 # A reply at the end of a turn that called no tool goes back to the model once with
 # this text (see tools.challenge_a_reply_that_called_nothing).
 CALLED_NOTHING_CHALLENGE = (
@@ -185,7 +185,7 @@ for each. It returns a plan id and a summary. run_acquisition runs it, and \
 its answer names the saved files and describes the last image; pass that on \
 to the operator in a sentence.
 
-Explaining the code. You can read the source of this assistant \
+Explaining the code. You can read the source of this agent \
 (zmart_ai_agent), of the ZMART Controller (zmart_controller) and of this \
 microscope's driver with search_source and read_source. When the operator \
 asks how something works, look it up there rather than answering from \
@@ -262,8 +262,8 @@ NOT_CONNECTED = (
 UNANSWERED = "(the driver did not answer this: {reason})"
 
 EYES_INSTRUCTIONS = """\
-You are the eyes of an assistant at a microscope, looking for a biologist. You \
-see every image the assistant looks at in this session, in order, each with \
+You are the eyes of an agent at a microscope, looking for a biologist. You \
+see every image the agent looks at in this session, in order, each with \
 its time, the microscope's position and settings and the image's measured \
 numbers. A stack of planes is shown as its maximum projection. Answer \
 the question about the current image directly, in a few sentences. Judge from \
