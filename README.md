@@ -2,28 +2,36 @@
 
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-pytest-blue)](#tests)
+[![tests](https://img.shields.io/badge/tests-pytest-blue)](#testing)
 
-The **ZMART AI agent** is a chat window where you ask for things at the microscope in your own
-words. A language model (Gemini by default; OpenAI, a server of your own or a model file on this
-computer also work) carries them out with the microscope and explains what it did. It works on
-any microscope that has a ZMART driver, because it drives the microscope only through the
-[ZMART Controller](https://github.com/thomdehoog/ZMART-controller), the small vocabulary that
-every ZMART driver speaks.
-It is part of [**ZMART**](https://github.com/thomdehoog/ZMART-microscopy) (ZMB's
-Microscopy-Agnostic Research Toolkit), the tools we use for smart microscopy at the Center for
-Microscopy and Image Analysis (ZMB), University of Zurich.
+<img src="docs/zmart-ai-agent-icon.png" align="left" width="150" alt="ZMART AI agent">
 
-## How it works
+The **ZMART AI agent** lets you drive a microscope by asking for things in your own words, in a chat window.
+It works on any microscope that has a ZMART driver, because it drives the microscope only through the [ZMART Controller](https://github.com/thomdehoog/ZMART-controller).
+It is part of [**ZMART**](https://github.com/thomdehoog/ZMART-microscopy) (ZMB's Microscopy-Agnostic Research Toolkit), the tools we use for smart microscopy
+at the Center for Microscopy and Image Analysis (ZMB), University of Zurich.
+<br clear="left"/>
+
+## The Problem
+
+Driving a microscope from code means learning its software, its names for settings and its
+limits, and an assistant built for one microscope knows nothing about the next. A language model
+can understand what an operator asks for, but left to itself it may guess at settings, act
+without asking, or claim to have done things it never did.
+
+## The Solution
+
+A language model (Gemini by default; OpenAI, a server of your own or a model file on this
+computer also work) carries out what you ask with the microscope and explains what it did.
 
 The model never touches the microscope directly. It can only call a small set of tools written
 here, and every tool checks what it is asked before acting. Each tool is a few commands of the
 ZMART Controller (`get_xyz`, `set_xyz`, `get_state`, `set_state`, `acquire`, `run_procedure`,
 ...), and the microscope's driver carries them out. The driver keeps the travel limits, the
-origin and the calibration, and it refuses what is not safe; the assistant passes its refusals
+origin and the calibration, and it refuses what is not safe; the agent passes its refusals
 on in plain words.
 
-**The assistant knows nothing about a microscope in advance.** When it connects, it asks the
+**The agent knows nothing about a microscope in advance.** When it connects, it asks the
 driver what this microscope is and what it can do, using the commands every ZMART driver
 answers anyway:
 
@@ -38,12 +46,12 @@ answers anyway:
 From the answers it writes the "This microscope" part of the model's instructions. The rest of
 the instructions is the same for every microscope: who you are (a biologist, so plain words), the
 ZMART vocabulary, the units, and the safety rules. So the controller is not shaped around the
-assistant; a driver that answers the ZMART commands is all it needs.
+agent; a driver that answers the ZMART commands is all it needs.
 
 The description in `get_info` is optional for a driver (see the controller's
 [driver guide](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/driver.md)). Without
-it, the assistant still connects and works from the other answers, and both the window and the
-model are told that the driver gives no description: the assistant then knows the settings by
+it, the agent still connects and works from the other answers, and both the window and the
+model are told that the driver gives no description: the agent then knows the settings by
 name, but not what they mean or in which unit.
 
 With every message, the model also gets a fresh reading of the microscope (the position, the
@@ -54,9 +62,9 @@ that is never an instruction.
 right is +x and down is +y, and the window shows the image the same way. So *go 100 um to the
 left* is a move to -x, without anything to set up. No such rule exists for z, so which way is
 *deeper* or *toward the coverslip* is for the driver's description to say; when it does not
-say, the assistant asks you once.
+say, the agent asks you once.
 
-## Install and start
+## Try it yourself
 
 On the microscope computer, the ZMART Controller and the microscope's driver come first (see
 the controller's [setup guide](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/setup.md)).
@@ -87,7 +95,7 @@ zmart-ai-agent --driver path\to\ZMART-controller\tests\mock_zmart_driver
 ```
 
 Images are saved where the driver saves them (its `output_root`, which the window names when it
-connects). Each acquisition is saved by the driver as OME-TIFF or OME-Zarr, and the assistant
+connects). Each acquisition is saved by the driver as OME-TIFF or OME-Zarr, and the agent
 reads the files back to show them and to look at them.
 
 ### Choosing the model
@@ -126,7 +134,7 @@ three positions with laser power 5 and 20* · *Move 100 um to the left* · *What
 setting do?* · *How does a move reach the microscope? Show me the code* · *Look every three
 minutes and tell me whether it drifts*
 
-## What it can do
+### What it can do
 
 | Tool | What it does | Controller commands |
 |---|---|---|
@@ -141,7 +149,7 @@ minutes and tell me whether it drifts*
 | `plan_acquisition` | checks a plan against the microscope without moving | `get_xyz`, `get_state`, `get_acquisition_options` |
 | `run_acquisition` | runs a checked plan, after your go-ahead | `set_xyz`, `set_state`, `acquire` |
 | `schedule`, `cancel_schedule` | sets or cancels an instruction for later | (none) |
-| `search_source`, `read_source` | searches and reads the source of this assistant, of the controller and of the connected microscope's driver | (none) |
+| `search_source`, `read_source` | searches and reads the source of this agent, of the controller and of the connected microscope's driver | (none) |
 
 **A plan** is deliberately simple, so that it means the same on every microscope: positions,
 channels and time points, with one acquisition for each combination. A channel is a short name
@@ -157,44 +165,54 @@ numbers, so *is this sharper than before?* and *has the sample moved since the f
 answered by looking. A z-stack is shown as its maximum projection. The last eight images stay
 attached; older turns keep their words, and beyond forty looks the oldest are dropped.
 
-**Schedules.** *Look every three minutes and tell me whether anything changed*: the assistant
+**Schedules.** *Look every three minutes and tell me whether anything changed*: the agent
 sets a named schedule, and the window's clock sends each due instruction as a turn of its own,
 marked `[scheduled 'name']` in the chat, through the same tools and checks as anything you type.
 A scheduled acquisition, routine or long move still asks for your go-ahead and waits until you
 answer. At most ten schedules, none more often than every five seconds. *Stop microscope* and
 *Clear context* cancel them all.
 
-## How it stays safe
+### How it stays safe
 
 - **Checks before acting.** A move is checked against the travel range the driver reports, a
   setting against the names the driver lists as changeable, and a plan against both and the
   acquisition options. Then the driver checks again, against its own limits.
-- **Refusals come with advice.** A refused or failed action comes back to the assistant with
+- **Refusals come with advice.** A refused or failed action comes back to the agent with
   what was refused, why (in the driver's own words), and what to do next. After a limit it is
   told to stop and leave the next number to you, rather than try a nearby value. When a name is
   not known (a setting, a routine, an option), the refusal lists the microscope's own names.
 - **A red banner for refusals.** A limit or an invalid value is also shown in the window
-  directly, whatever the assistant says.
+  directly, whatever the agent says.
 - **Big steps are agreed in the chat first.** Starting an acquisition, running a routine other
-  than focus, and a stage move of more than 1 mm in XY or 100 um in Z wait for you: the assistant
+  than focus, and a stage move of more than 1 mm in XY or 100 um in Z wait for you: the agent
   asks, and the step can run only after your reply. Moves are measured from where the stage was
   when you last wrote, so small steps that add up also ask. That the question comes first is in
   the code, not only in the model's instructions.
 - **One action at a time,** so each result is seen before the next action.
 - **Two checks on the reply.** An empty reply goes back to the model once. A reply that claims
   to have done something in a turn that called no tool also goes back once, with that fact.
-- **Cancel prompt** stops the assistant: every further tool call in that turn does nothing.
+- **Cancel prompt** stops the agent: every further tool call in that turn does nothing.
   **Stop microscope** also ends a running acquisition after the image being taken. A single move
   or image the driver has already started runs to its end, since the ZMART vocabulary has no
   command to interrupt it; the microscope's own controls stop it sooner. The window does not
-  close while the assistant is still working.
+  close while the agent is still working.
 - **Clear context** forgets the conversation; **Show tool calls** lists each tool call in the
   chat as it happens. Choosing another microscope also starts the conversation afresh.
 
-To keep long conversations quick, the assistant forgets older messages: after 15 of your
+To keep long conversations quick, the agent forgets older messages: after 15 of your
 messages it keeps the newest 10.
 
-## Tests
+### Status
+
+This is a release candidate. It is a port of the Nikon chat assistant onto the ZMART
+Controller, and so far it has been tried on the controller's mock microscope only, not yet on
+a real one. The offline tests pass (139), and with Gemini 3.5 Flash-Lite the evaluation passes
+45 of its 47 cases and 45 of the 47 held-out ones. The few that fail vary from run to run, and
+they are judgement slips of that small model: now and then it changes a setting the operator
+named by another name (the laser for "LED brightness") or moves before asking which way they
+meant. Those are the cases to watch with a cheaper model; the driver's limits still hold.
+
+## Testing
 
 The tests drive the mock microscope from ZMART-controller through the real controller, with a
 scripted model in place of the real one, so they need neither a microscope nor an API key. They
@@ -207,12 +225,12 @@ pytest                                    # offline, about 15 s
 ruff check . && ruff format --check .     # lint and formatting, rules in pyproject.toml
 ```
 
-## For maintainers: the evaluation
+### For maintainers: the evaluation
 
-The tests check the code. Whether the assistant does what an operator expects (acts when a
+The tests check the code. Whether the agent does what an operator expects (acts when a
 request is clear, asks when it is not, stops at a limit, ignores instructions hidden in the
 data) depends on the model, and is checked by the evaluation. It runs every case in
-`tests/eval_cases.json` through the real assistant, with a real model and the mock microscope,
+`tests/eval_cases.json` through the real agent, with a real model and the mock microscope,
 and scores the result. Each run costs API calls. Without a key (or, for a server of your own,
 without a server that answers) it says so and stops.
 
@@ -224,19 +242,19 @@ python tests/evals.py --scoreboard evals-*.jsonl               # pass rates per 
 ```
 
 Change the instructions while looking at `eval_cases.json` only, then check with `--holdout`:
-that shows whether a change made the assistant better, or only fitted it to the cases.
+that shows whether a change made the agent better, or only fitted it to the cases.
 
 ## Files
 
 | File | What it is |
 |---|---|
 | `zmart_ai_agent/tools.py` | The tools: everything the model can ask for, one function each, with the go-ahead rule, the refusals and the two guards on a reply. The place to look up or add a tool. |
-| `zmart_ai_agent/microscope.py` | The connection through the ZMART Controller, what the assistant learns at connect, and the "This microscope" section it writes from that. |
+| `zmart_ai_agent/microscope.py` | The connection through the ZMART Controller, what the agent learns at connect, and the "This microscope" section it writes from that. |
 | `zmart_ai_agent/instructions.py` | The prose the model reads: the generic instructions, the frame of the microscope section, the advice given with a refusal, and the setup steps it passes on. |
 | `zmart_ai_agent/plans.py` | The plan format, the order a plan runs in, and the plan in plain sentences. |
 | `zmart_ai_agent/images.py` | The saved files read back (OME-TIFF and OME-Zarr), their statistics, and the binned PNG for the model. |
 | `zmart_ai_agent/eyes.py` | The vision model's own conversation: the images seen this session, compared on request. |
-| `zmart_ai_agent/schedules.py` | The schedules the assistant sets, and when each is due. |
+| `zmart_ai_agent/schedules.py` | The schedules the agent sets, and when each is due. |
 | `zmart_ai_agent/memory.py` | The conversation made smaller now and then. |
 | `zmart_ai_agent/models.py` | The ways to reach a model: a provider preset, an API key held in memory, the model object. |
 | `zmart_ai_agent/local.py` | A `.gguf` model file served on this computer by llama.cpp. |
@@ -263,5 +281,5 @@ MIT License. See LICENSE file for details.
 ## Links
 
 - [ZMART Microscopy](https://github.com/thomdehoog/ZMART-microscopy): the main repository, with the workflows and the drivers
-- [ZMART Controller](https://github.com/thomdehoog/ZMART-controller): the vocabulary this assistant speaks, and the mock microscope its tests use
+- [ZMART Controller](https://github.com/thomdehoog/ZMART-controller): the vocabulary this agent speaks, and the mock microscope its tests use
 - [Center for Microscopy and Image Analysis (ZMB)](https://www.zmb.uzh.ch), University of Zurich

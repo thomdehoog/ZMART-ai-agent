@@ -50,7 +50,7 @@ Expectations:
     max_calls, min_calls          {tool: n}: called at most or at least n times
     max_tool_calls                at most n tool calls in all
     args            {tool: {arg: value}}: some call carried these arguments; a
-                    dotted name reaches inside ("plan.options.z_planes",
+                    dotted name reaches inside ("options.z_planes",
                     "settings.gain", "entries.range_um")
     state           {key: value}: the microscope afterwards. Keys: x, y, z, every
                     changeable setting by its name (laser_power, gain,
