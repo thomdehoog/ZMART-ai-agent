@@ -1,0 +1,50 @@
+# The AI agent's tests on Linux and Windows, on every push and pull request.
+#
+# They drive the mock microscope of ZMART-controller through the real
+# controller, with a scripted model in place of a real one, so they need
+# neither a microscope nor an API key. The controller repository is checked out
+# beside this one for its mock, and the chat window is tested without a screen.
+# The evaluation with a real model (tests/evals.py) is not run here: it needs a
+# key and costs calls.
+name: tests
+
+on:
+  push:
+    branches: [main, release-candidate]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    env:
+      QT_QPA_PLATFORM: offscreen
+      ZMART_MOCK_DRIVER: ${{ github.workspace }}/ZMART-controller/tests/mock_zmart_driver
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ZMART-ai-agent
+      - uses: actions/checkout@v4
+        with:
+          repository: thomdehoog/ZMART-controller
+          path: ZMART-controller
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: The libraries Qt needs on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
+      - name: Install the controller and the agent with its test tools
+        run: python -m pip install -e ./ZMART-controller -e "./ZMART-ai-agent[test]"
+      - name: Tests
+        working-directory: ZMART-ai-agent
+        run: python -m pytest -q
+      - name: Style
+        working-directory: ZMART-ai-agent
+        run: python -m ruff check .
