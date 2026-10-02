@@ -31,7 +31,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from zmart_ai_agent.agent import Assistant
 from zmart_ai_agent.eyes import Eyes, last_turns
-from zmart_ai_agent.images import as_png, binned, image_statistics, read_saved
+from zmart_ai_agent.images import as_png, binned, image_statistics, read_saved, saved_files
 from zmart_ai_agent.instructions import (
     CALLED_NOTHING_CHALLENGE,
     GO_AHEAD_ADVICE,
@@ -226,12 +226,16 @@ def test_status(microscope):
     assistant, _ = talk(microscope, ("get_status", {}), "Here is the status.")
     assistant.send("where are we?")
     status = tool_results(assistant)[0]
-    assert status["position"]["x"] == {
+    # The controller's answer, passed on as it is: the position, the motor, the
+    # unit, how far the stage travels, and how far a picture reaches beyond that.
+    x = status["position"]["x"]
+    assert {k: x[k] for k in ("value", "actuator", "unit", "range")} == {
         "value": 0.0,
         "actuator": "motoric",
         "unit": "um",
         "range": [-5000.0, 5000.0],
     }
+    assert x["reach"][0] <= -5000.0 and x["reach"][1] >= 5000.0
     assert status["state"]["changeable"]["exposure_ms"] == 10.0
     assert status["state"]["observed"]["objective"] == "10x/0.30 Air"
 
@@ -613,16 +617,20 @@ def test_saved_ome_tiff_and_ome_zarr_files_are_read(microscope):
     tiff = microscope.session.acquire(acquisition_type="t", position_label="a")["report"]
     options = {"format": "ome-zarr", "z_planes": 3}
     zarr = microscope.session.acquire(acquisition_type="t", position_label="b", options=options)
-    (folder,) = zarr["report"]["files"]
+    # The driver lists everything it saved, its own record of the capture too;
+    # the agent picks the pictures out of that list, as its tools do.
+    (folder,) = saved_files(zarr["report"])
     stack = read_saved([folder])
     assert stack.shape == (3, 64, 64) and stack.dtype == np.uint16
     piece = np.frombuffer((Path(folder) / "0" / "1" / "0" / "0").read_bytes(), "<u2")
     assert np.array_equal(stack[1], piece.reshape(64, 64))  # plane 1 is the piece the mock wrote
-    single = read_saved(tiff["files"])
+    single = read_saved(saved_files(tiff))
     assert single.shape == (64, 64) and single.max() > single.mean() > 0
-    planes = microscope.session.acquire(
-        acquisition_type="t", position_label="c", options={"z_planes": 2}
-    )["report"]["files"]
+    planes = saved_files(
+        microscope.session.acquire(
+            acquisition_type="t", position_label="c", options={"z_planes": 2}
+        )["report"]
+    )
     assert read_saved(planes).shape == (2, 64, 64)  # one OME-TIFF per plane, stacked
     with pytest.raises(ValueError, match="cannot read"):
         read_saved([str(Path(planes[0]).with_suffix(".png"))])

@@ -129,7 +129,8 @@ words. get_status reads get_xyz and get_state. move_stage moves with set_xyz. \
 set_microscope changes settings with set_state, by the names in changeable \
 only. When the operator names a setting this microscope does not have, do not \
 choose the nearest one yourself, even one that seems to do the same job: say \
-which settings there are and ask which one they mean. focus runs the microscope's own focus routine with run_procedure; \
+which settings there are and ask which one they mean. focus runs the \
+microscope's own focus routine with run_procedure; \
 run_procedure runs any listed routine. look acquires one image with the \
 current settings and asks the eyes about it. plan_acquisition and \
 run_acquisition image positions, channels and time points, one acquire at a \
