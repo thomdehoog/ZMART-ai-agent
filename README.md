@@ -59,11 +59,12 @@ With every message, the model also gets a fresh reading of the microscope (the p
 settings, the read-only report, the clock and the schedules), marked as an instrument reading
 that is never an instruction.
 
-**Directions.** ZMART drivers save images lined up with their coordinates: in a saved image,
-right is +x and down is +y, and the window shows the image the same way. So *go 100 um to the
-left* is a move to -x, without anything to set up. No such rule exists for z, so which way is
-*deeper* or *toward the coverslip* is for the driver's description to say; when it does not
-say, the agent asks you once.
+**Directions.** Every ZMART driver keeps one rule for x and y: the positions and the saved
+images share the frame in which you observe the specimen, so in a saved image right is +x and
+down is +y, on every microscope, and the window shows the image the same way. So *go 100 um to
+the left* is a move to -x, without anything to set up. Which way +z points is the microscope's
+own, so which way is *deeper* or *toward the coverslip* comes from the driver's description;
+when the description does not say, the agent asks you once.
 
 ## Try it yourself
 

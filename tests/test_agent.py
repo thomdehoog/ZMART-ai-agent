@@ -145,7 +145,8 @@ def test_the_model_is_told_this_microscope_and_the_generic_rules(microscope):
     told = script.requests[0][-1].instructions
     assert "biologist" in told and '"success"' in told  # the generic part
     assert "A pretend widefield fluorescence microscope" in told  # this microscope
-    assert "right is +x" in told and "down is +y" in told  # the image-aligned frame
+    assert "right is +x" in told and "down is +y" in told  # the contract's frame for x and y
+    assert "which way +z points" in told  # z: from the description, or asked once
 
 
 def test_a_driver_without_a_description_still_connects_and_says_so(instrument, monkeypatch):

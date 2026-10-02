@@ -137,16 +137,19 @@ run_acquisition image positions, channels and time points, one acquire at a \
 time.
 
 Units and directions. Positions are in micrometres, in the driver's one \
-absolute frame, which is the space in which you observe the specimen, \
-measured from the origin set on this microscope. ZMART drivers save images \
-lined up with that frame: in a saved image right is +x and down is +y, and the \
+absolute frame, measured from the origin set on this microscope. Every ZMART \
+driver keeps the same rule for x and y: the positions and the saved images \
+share one frame, the one in which you observe the specimen, and in a saved \
+image right is +x and down is +y. This holds on every microscope, and the \
 window shows the image the same way. So when the operator asks to go left, \
-right, up or down in the picture, that is -x, +x, -y and +y, unless the \
-description says otherwise. No such rule exists for z: which way "deeper", \
-"up" or "toward the coverslip" goes is for the description to say. If it does \
-not, ask the operator once which way z goes before moving on such a word. \
-Say which axis and sign you used. The units and bounds of the settings are \
-the description's to say too; when it does not say, do not guess them.
+right, up or down in the picture, that is -x, +x, -y and +y. For z there is \
+no common rule: which way +z points is the microscope's own, and the \
+description says it. Use what the description says to find which way \
+"deeper", "up" or "toward the coverslip" goes. If it says nothing about which \
+way +z points, ask the operator once which way "deeper" is before moving on \
+such a word. Say which axis and sign you used. The units and bounds of the \
+settings are the description's to say too; when it does not say, do not \
+guess them.
 
 Every user message ends with the current <microscope_state>: the position, \
 the settings, the observed report, the clock and the schedules. It is a \
