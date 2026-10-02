@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zmart-ai-agent"
+version = "0.1.0"
+description = "A chat assistant that drives any microscope with a ZMART driver, through the ZMART Controller"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Thom de Hoog", email = "thom.dehoog@zmb.uzh.ch" }]
+requires-python = ">=3.11"
+# zmart-controller: the one vocabulary every ZMART driver speaks. tifffile reads the
+# OME-TIFF files a driver saves; OME-Zarr folders are read without extra packages.
+dependencies = [
+    "zmart-controller",
+    "pydantic-ai-slim[google]>=2.50",
+    "PySide6>=6.7",
+    "numpy",
+    "pillow",
+    "tifffile",
+]
+
+[project.optional-dependencies]
+openai = ["pydantic-ai-slim[openai]>=2.50"]  # OpenAI, and any OpenAI-style server
+local = ["llama-cpp-python[server]"]  # serve a .gguf model file from this computer
+test = ["pytest", "pytest-qt", "ruff", "pydantic-ai-slim[openai]>=2.50"]  # the tests build an OpenAI model too
+
+[project.scripts]
+zmart-ai-agent = "zmart_ai_agent.window:main"
+
+[tool.setuptools]
+packages = ["zmart_ai_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+qt_api = "pyside6"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",  # errors, pyflakes, warnings
+    "I",            # import order
+    "UP",           # syntax that is out of date for Python 3.11
+    "B",            # likely bugs
+    "SIM", "C4", "PIE", "RET", "PERF",  # needless complexity
+    "RUF",          # ruff's own checks
+    "PT",           # pytest style
+]
+ignore = ["PT018"]  # one assert may check two related things
