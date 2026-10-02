@@ -3,6 +3,7 @@
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![tests](https://img.shields.io/badge/tests-pytest-blue)](#testing)
+[![status](https://img.shields.io/badge/status-release%20candidate-orange)](#status)
 
 <img src="docs/zmart-ai-agent-icon.png" align="left" width="150" alt="ZMART AI agent">
 
