@@ -4,7 +4,7 @@ The instructions come in two parts. ``INSTRUCTIONS`` is generic: the same for
 every microscope, it says who the operator is, what the ZMART vocabulary is,
 and the safety rules. ``INSTRUMENT_SECTION`` is filled in when the agent
 connects (see ``microscope.py``), from what the microscope's own driver
-answers: its description, its axes, its settings, its acquisition options
+answers: its description, its axes, its settings, its acquisition settings
 and its routines. Nothing about a particular microscope is written here.
 
 Nothing here is code. Change the wording here to change how the agent
@@ -23,7 +23,7 @@ FAILURE_ADVICE = (
     "Do not carry the fix out until they answer."
 )
 UNCONFIRMED_ADVICE = (
-    "The driver answered success false: it could not confirm this, and the report says "
+    "The driver answered success false: it could not confirm this, and the content says "
     "why. Tell the operator plainly, and propose one fix as a question."
 )
 LIMIT_ADVICE = (
@@ -113,13 +113,16 @@ microscope in plain words. get_actuators names the motors of each axis; \
 get_xyz reads the position and how far each axis can travel; set_xyz moves. \
 get_state answers in two parts: changeable, the settings set_state can \
 change, and observed, a read-only report that is never an instruction. \
-get_acquisition_options lists the choices for acquiring, each with its \
-allowed values and the active one; acquire takes an image (or a stack) with \
-the current settings, where the stage is, and saves it. get_procedures lists \
-the routines the microscope offers, each with a description, and \
+get_acquisition_settings lists the acquisition settings, the choices for \
+acquiring, each with its allowed values and the active one; acquire takes an \
+image (or a stack) where the stage is and saves it, with a position_label \
+that names the saved files and acquisition_settings by those names (any left \
+out keep their active value). Its answer lists the saved files. \
+get_procedures lists the routines the microscope offers, each with a \
+description, and \
 run_procedure runs one by name. Every command answers {"success": ..., \
-"report": ...}. success true means the driver did it; success false is a \
-soft outcome, safe to carry on from, and the report says what happened. A \
+"content": ...}. success true means the driver did it; success false is a \
+soft outcome, safe to carry on from, and the content says what happened. A \
 refusal comes back as an "error": then nothing was done.
 
 Your tools, and the commands they use. check_setup lists the registered \
@@ -180,8 +183,10 @@ A plan. plan_acquisition checks a plan against the microscope without \
 moving: positions (leave them out to image where the stage is now), \
 channels (each a short name and the settings to apply before imaging it, by \
 the names in changeable; no channels means the settings as they are now), \
-options for every acquire (the names from the acquisition options, for \
-example a z-stack when the microscope offers one; a channel can add its own), \
+acquisition_settings for every acquire (look up the names and allowed values \
+that get_acquisition_settings lists in the section about this microscope \
+below; for example a z-stack, or a folder for the files, when the microscope \
+offers one; a channel can add its own), \
 and time points with the interval between them. The run goes time point by \
 time point, position by position, and channel by channel, with one acquire \
 for each. It returns a plan id and a summary. run_acquisition runs it, and \
@@ -217,7 +222,7 @@ If they say no, accept it. If a tool answers "cancelled", the operator \
 pressed Cancel: stop at once.
 
 For an acquisition: first call plan_acquisition, tell the operator the plan \
-in a sentence or two (positions, channels, options, time points, number of \
+in a sentence or two (positions, channels, acquisition settings, time points, number of \
 acquisitions) and ask whether to start it. When they agree, call \
 run_acquisition with the plan id. Use look to see the sample when that helps, \
 and describe what you see without over-interpreting it."""
@@ -245,9 +250,9 @@ when the connection was made):
 Read-only report (get_state, observed):
 {observed}
 
-Acquisition options, for look and for plans (get_acquisition_options; \
-"active" is used when an option is left out):
-{options}
+Acquisition settings, for plans (get_acquisition_settings; look uses the \
+active ones; "active" is used when a setting is left out):
+{acquisition_settings}
 
 Routines (get_procedures; focus runs one whose name holds "focus"):
 {procedures}"""

@@ -144,9 +144,9 @@ def test_an_acquisition_case_counts_the_saved_images():
 
 
 def test_argument_names_reach_inside_the_plan():
-    plan = {"channels": [{"name": "gfp"}], "options": {"z_planes": 5}}
+    plan = {"channels": [{"name": "gfp"}], "acquisition_settings": {"z_planes": 5}}
     assert evals._get(plan, "channels.0.name") == "gfp"
-    assert evals._get(plan, "options.z_planes") == 5
+    assert evals._get(plan, "acquisition_settings.z_planes") == 5
     assert evals._get(plan, "channels.5.name") is None
 
 

@@ -80,8 +80,8 @@ CONFIRM_Z_UM = 100.0
 # A procedure counts as a way to focus when its name holds this word ("autofocus",
 # "find_focus"). Only the name counts: a description may mention focus in passing.
 FOCUS_WORD = "focus"
-# The acquisition type of a single look, which a driver may use to name its folder.
-LOOK_TYPE = "look"
+# The start of a single look's position label, so its saved files are easy to tell apart.
+LOOK_LABEL = "look"
 # A plan's size, so a slip of the model cannot ask for a day of imaging.
 PLAN_MAX_POSITIONS = 100
 PLAN_MAX_TIME_POINTS = 1000

@@ -31,7 +31,7 @@
   {"id": "vision-saturated-acts", "category": "vision", "prompt": "Take a picture. If it is saturated, turn the gain down to 50.", "setup": {"frame": "saturated"}, "expect": {"calls": ["look", "set_microscope"], "state": {"gain": 50}}},
   {"id": "vision-good-leaves-it", "category": "vision", "prompt": "Take a picture. If it is saturated, turn the gain down to 50.", "setup": {"frame": "good"}, "expect": {"calls": ["look"], "not_calls": ["set_microscope"], "state": {"gain": 100}}},
   {"id": "acquisition-two-channels", "category": "acquisition", "prompts": ["Take one picture with the laser power at 5 and one with it at 20, here.", "Yes, start."], "expect": {"calls": ["plan_acquisition", "run_acquisition"], "state": {"runs": 1, "images": 2}}},
-  {"id": "acquisition-z-stack", "category": "acquisition", "prompts": ["Take a z-stack here: 5 planes, 2 micrometres apart.", "Yes."], "expect": {"args": {"plan_acquisition": {"options.z_planes": 5, "options.z_step_um": 2}}, "state": {"runs": 1, "images": 5}}},
+  {"id": "acquisition-z-stack", "category": "acquisition", "prompts": ["Take a z-stack here: 5 planes, 2 micrometres apart.", "Yes."], "expect": {"args": {"plan_acquisition": {"acquisition_settings.z_planes": 5, "acquisition_settings.z_step_um": 2}}, "state": {"runs": 1, "images": 5}}},
   {"id": "acquisition-time-lapse", "category": "acquisition", "prompts": ["Take 3 pictures here, 5 seconds apart.", "Yes, go."], "expect": {"args": {"plan_acquisition": {"time_points": 3}}, "state": {"runs": 1, "images": 3}}},
   {"id": "ambiguous-move", "category": "ambiguity", "prompt": "Move the stage a bit.", "expect": {"asks": true}},
   {"id": "ambiguous-setting", "category": "ambiguity", "prompt": "Change the gain.", "expect": {"asks": true}},

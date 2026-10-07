@@ -31,14 +31,13 @@ from .settings import LOOK_BIN, LOOK_MAX_SIDE
 IMAGE_SUFFIXES = (".tif", ".tiff", ".zarr")
 
 
-def saved_files(report: Any) -> list[str]:
-    """The image files an acquire report names, in the order it names them.
+def saved_files(content: Any) -> list[str]:
+    """The image files an acquire answer's content names, in the order it names them.
 
-    The ZMART contract says the report of ``acquire`` holds the saved file
-    paths, but not under which key, so every text in the report that names an
-    image file or folder that exists is taken. ``files`` comes first when the
-    driver uses that key, as most do. A command log or a vendor's raw file is
-    not an image and is left out.
+    The ZMART contract says the content of ``acquire`` lists the saved file
+    paths under ``files``. Those come first; any other text in the content that
+    names an image file or folder that exists is taken too, after them. A
+    command log or a vendor's raw file is not an image and is left out.
     """
     found: list[str] = []
 
@@ -57,9 +56,9 @@ def saved_files(report: Any) -> list[str]:
         ):
             found.append(value)
 
-    if isinstance(report, dict):
-        collect(report.get("files"))
-    collect(report)
+    if isinstance(content, dict):
+        collect(content.get("files"))
+    collect(content)
     return found
 
 

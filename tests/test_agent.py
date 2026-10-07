@@ -41,7 +41,7 @@ from zmart_ai_agent.instructions import (
 )
 from zmart_ai_agent.microscope import Microscope
 from zmart_ai_agent.models import Endpoint
-from zmart_ai_agent.settings import DEFAULT_MODEL_SETTINGS, HISTORY_KEEP_TURNS
+from zmart_ai_agent.settings import DEFAULT_MODEL_SETTINGS, HISTORY_KEEP_TURNS, LOOK_LABEL
 
 
 class Script:
@@ -101,22 +101,22 @@ def tool_results(conversation):
 
 def position(microscope):
     """Where the stage is, read back through the controller."""
-    report = microscope.session.get_xyz()["report"]
-    return {axis: report[axis]["value"] for axis in "xyz"}
+    reading = microscope.session.get_xyz()["content"]
+    return {axis: reading[axis]["value"] for axis in "xyz"}
 
 
 def settings(microscope):
     """The changeable settings, read back through the controller."""
-    return microscope.session.get_state()["report"]["changeable"]
+    return microscope.session.get_state()["content"]["changeable"]
 
 
 def saved_images(microscope):
-    """Every image file the driver saved, outside the folder of single looks."""
+    """Every image file the driver saved, except those of single looks."""
     root = Path(microscope.learned["info"]["output_root"])
     return sorted(
         p
         for p in [*root.rglob("*.ome.tif"), *root.rglob("*.ome.zarr")]
-        if "look" not in p.parts and "_vendor_raw" not in p.parts
+        if not p.name.startswith(f"{LOOK_LABEL}_") and "_vendor_raw" not in p.parts
     )
 
 
@@ -133,7 +133,7 @@ def test_connecting_learns_the_microscope_from_the_controller(microscope):
     assert "3 is 40x/0.95 Air" in section
     assert "x: from -5000 to 5000 um" in section and "motors: motoric, piezo" in section
     assert '"laser_power": 10.0' in section and '"objective": "10x/0.30 Air"' in section
-    assert "z_planes" in section and "ome-zarr" in section  # get_acquisition_options
+    assert "z_planes" in section and "ome-zarr" in section  # get_acquisition_settings
     assert "autofocus: Take a short z-stack" in section  # get_procedures, with its description
     assert microscope.learned["info"]["output_root"] in section
     assert "client" not in section  # nothing from the connection dict beyond its name
@@ -152,7 +152,7 @@ def test_the_model_is_told_this_microscope_and_the_generic_rules(microscope):
 def test_a_driver_without_a_description_still_connects_and_says_so(instrument, monkeypatch):
     def get_info(handle):
         answer = original(handle)
-        answer["report"].pop("description")
+        answer["content"].pop("description")
         return answer
 
     original = MOCK_OPS["get_info"]
@@ -338,7 +338,7 @@ def test_settings_change_without_asking(microscope):
     conversation, _ = talk(microscope, ("set_microscope", call), "Set.")
     conversation.send("the 20x at 50 ms")
     result = tool_results(conversation)[0]
-    assert result["success"] is True and result["report"]["applied"] == {
+    assert result["success"] is True and result["content"]["applied"] == {
         "objective": 2,
         "exposure_ms": 50,
     }
@@ -415,12 +415,12 @@ def test_focus_runs_the_drivers_focus_procedure_at_once(microscope):
     result = tool_results(conversation)[0]
     assert result["procedure"] == "autofocus" and result["z_before_um"] == 6.0
     assert result["z_after_um"] == position(microscope)["z"] != 6.0
-    assert result["report"]["ran"] == "autofocus" and len(result["report"]["scores"]) == 11
+    assert result["content"]["ran"] == "autofocus" and len(result["content"]["scores"]) == 11
 
 
 def test_focus_without_a_focus_procedure_is_refused_plainly(microscope, monkeypatch):
     def get_procedures(handle):
-        return {"success": True, "report": {"backlash_takeup": {"description": "takes up play"}}}
+        return {"success": True, "content": {"backlash_takeup": {"description": "takes up play"}}}
 
     monkeypatch.setitem(MOCK_OPS, "get_procedures", get_procedures)
     conversation, _ = talk(microscope, ("focus", {}), "This microscope has no autofocus.")
@@ -440,7 +440,7 @@ def test_a_procedure_is_asked_about_first_then_run(microscope):
     question = tool_results(conversation)[0]
     assert question["status"] == "needs_go_ahead" and "zero_piezo" in question["not_done_yet"]
     conversation.send("yes")
-    assert tool_results(conversation)[-1]["report"]["ran"] == "zero_piezo"
+    assert tool_results(conversation)[-1]["content"]["ran"] == "zero_piezo"
 
 
 def test_an_unknown_procedure_is_refused_with_the_drivers_names(microscope):
@@ -465,7 +465,7 @@ def test_look_acquires_reads_the_file_and_asks_a_vision_model(microscope):
     assert result["answer"] == "Bright round spots on a dark field."
     assert result["statistics"]["max"] > result["statistics"]["mean"] > 0
     (saved,) = result["files"]
-    assert Path(saved).is_file() and "look" in Path(saved).parts
+    assert Path(saved).is_file() and Path(saved).name.startswith(f"{LOOK_LABEL}_")
     image, caption = microscope.images[0]
     assert image.shape == (64, 64) and caption == "what do you see?"
     # the vision model got the question, the measurements and a PNG
@@ -589,13 +589,13 @@ def test_a_model_that_cannot_see_gets_the_numbers_only(microscope):
 
 def test_a_failed_acquisition_is_reported_softly(microscope, monkeypatch):
     def acquire(handle, **kwargs):
-        return {"success": False, "report": {"confirmed": False, "reason": "no image came back"}}
+        return {"success": False, "content": {"confirmed": False, "reason": "no image came back"}}
 
     monkeypatch.setitem(MOCK_OPS, "acquire", acquire)
     conversation, _ = talk(microscope, ("look", {"question": "what?"}), "No image came back.")
     conversation.send("look")
     result = tool_results(conversation)[0]
-    assert result["success"] is False and result["report"]["reason"] == "no image came back"
+    assert result["success"] is False and result["content"]["reason"] == "no image came back"
     assert "propose one fix" in result["advice"] and microscope.images == []
 
 
@@ -617,12 +617,12 @@ def test_image_statistics_and_png(shape):
 
 
 def test_saved_ome_tiff_and_ome_zarr_files_are_read(microscope):
-    tiff = microscope.session.acquire(acquisition_type="t", position_label="a")["report"]
-    options = {"format": "ome-zarr", "z_planes": 3}
-    zarr = microscope.session.acquire(acquisition_type="t", position_label="b", options=options)
+    tiff = microscope.session.acquire(position_label="a")["content"]
+    settings = {"format": "ome-zarr", "z_planes": 3}
+    zarr = microscope.session.acquire(position_label="b", acquisition_settings=settings)
     # The driver lists everything it saved, its own record of the capture too;
     # the agent picks the pictures out of that list, as its tools do.
-    (folder,) = saved_files(zarr["report"])
+    (folder,) = saved_files(zarr["content"])
     stack = read_saved([folder])
     assert stack.shape == (3, 64, 64) and stack.dtype == np.uint16
     piece = np.frombuffer((Path(folder) / "0" / "1" / "0" / "0").read_bytes(), "<u2")
@@ -630,9 +630,9 @@ def test_saved_ome_tiff_and_ome_zarr_files_are_read(microscope):
     single = read_saved(saved_files(tiff))
     assert single.shape == (64, 64) and single.max() > single.mean() > 0
     planes = saved_files(
-        microscope.session.acquire(
-            acquisition_type="t", position_label="c", options={"z_planes": 2}
-        )["report"]
+        microscope.session.acquire(position_label="c", acquisition_settings={"z_planes": 2})[
+            "content"
+        ]
     )
     assert read_saved(planes).shape == (2, 64, 64)  # one OME-TIFF per plane, stacked
     with pytest.raises(ValueError, match="cannot read"):
@@ -782,7 +782,7 @@ PLAN = {  # the flat form, as the model sends it
         {"name": "dim", "settings": {"laser_power": 5}},
         {"name": "bright", "settings": {"laser_power": 20, "exposure_ms": 20}},
     ],
-    "options": {"z_planes": 3, "z_step_um": 1},
+    "acquisition_settings": {"z_planes": 3, "z_step_um": 1},
 }
 RUN = ("run_acquisition", {"plan_id": "stack_test-1"})
 
@@ -876,7 +876,7 @@ def test_time_points_and_ome_zarr(microscope):
     plan = {
         "name": "lapse",
         "channels": [],  # no channels: the settings as they are now
-        "options": {"format": "ome-zarr", "z_planes": 2},
+        "acquisition_settings": {"format": "ome-zarr", "z_planes": 2},
         "time_points": 2,
         "interval_s": 0,
     }
@@ -898,10 +898,16 @@ def test_time_points_and_ome_zarr(microscope):
         ({"positions": [{"x": 100, "y": 200, "z": 2000}]}, "limit", "outside the range"),
         ({"positions": [{"x": 1, "y": 1, "z": 0, "name": "c"}] * 2}, "invalid", "more than once"),
         ({"channels": [{"name": "c", "settings": {"power": 5}}]}, "invalid", "'power'"),
-        ({"options": {"planes": 3}}, "invalid", "'planes'"),
-        ({"options": {"format": "png"}}, "invalid", "'png'"),
+        ({"acquisition_settings": {"planes": 3}}, "invalid", "'planes'"),
+        ({"acquisition_settings": {"format": "png"}}, "invalid", "'png'"),
     ],
-    ids=["outside", "repeated-name", "unknown-setting", "unknown-option", "bad-option-value"],
+    ids=[
+        "outside",
+        "repeated-name",
+        "unknown-setting",
+        "unknown-acquisition-setting",
+        "bad-acquisition-setting-value",
+    ],
 )
 def test_a_plan_with_a_problem_is_refused_before_anything_moves(microscope, change, code, message):
     conversation, _ = talk(microscope, ("plan_acquisition", {**PLAN, **change}), "It cannot run.")

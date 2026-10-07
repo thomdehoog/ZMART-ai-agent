@@ -5,8 +5,8 @@ microscope: positions, channels and time points, with one ``acquire`` for
 every combination. A channel is a short name and the settings to apply before
 imaging it, by the microscope's own setting names (the ``changeable`` part of
 ``get_state``). Anything an acquisition itself can do, such as a z-stack, is
-one of the driver's acquisition options, given once for the whole plan or
-per channel. The run goes time point by time point, position by position,
+one of the driver's acquisition settings (``get_acquisition_settings``), given
+once for the whole plan or per channel. The run goes time point by time point, position by position,
 and channel by channel.
 
 ``AcquisitionPlan`` is the form the model fills in. ``steps`` lists the
@@ -48,9 +48,9 @@ class ChannelSpec(BaseModel):
         description="the settings to apply before imaging this channel, by the names in "
         "changeable, e.g. {'exposure_ms': 50}",
     )
-    options: dict[str, Any] = Field(
+    acquisition_settings: dict[str, Any] = Field(
         default_factory=dict,
-        description="acquisition options for this channel only, on top of the plan's",
+        description="acquisition settings for this channel only, on top of the plan's",
     )
 
 
@@ -66,10 +66,10 @@ class AcquisitionPlan(BaseModel):
     channels: list[ChannelSpec] = Field(
         default_factory=list, description="leave empty to image with the settings as they are"
     )
-    options: dict[str, Any] = Field(
+    acquisition_settings: dict[str, Any] = Field(
         default_factory=dict,
-        description="acquisition options for every acquire, by the names in the acquisition "
-        "options, e.g. a z-stack",
+        description="acquisition settings for every acquire, by the names that "
+        "get_acquisition_settings lists, e.g. a z-stack",
     )
     time_points: int = Field(1, ge=1, le=PLAN_MAX_TIME_POINTS)
     interval_s: float = Field(0.0, ge=0, description="time between the starts of time points")
@@ -103,10 +103,10 @@ def describe(plan: AcquisitionPlan, here: dict[str, float]) -> str:
     channels = [
         f"{c.name} ({_values(c.settings)})" if c.settings else c.name for c in plan.channels
     ]
-    with_options = [c.name for c in plan.channels if c.options]
-    options = _values(plan.options) or "as the microscope has them"
-    if with_options:
-        options += f", with options of their own for {', '.join(with_options)}"
+    with_own = [c.name for c in plan.channels if c.acquisition_settings]
+    acquisition = _values(plan.acquisition_settings) or "as the microscope has them"
+    if with_own:
+        acquisition += f", with settings of their own for {', '.join(with_own)}"
     times = ""
     if plan.time_points > 1:
         times = f", {plan.time_points} time points {plan.interval_s:g} s apart"
@@ -122,7 +122,8 @@ def describe(plan: AcquisitionPlan, here: dict[str, float]) -> str:
         travel += " This includes a long move."
     return (
         f"{count_acquisitions(plan)} acquisitions: channels "
-        f"{', '.join(channels) or 'none, the settings as they are now'}; options {options}{times}; "
+        f"{', '.join(channels) or 'none, the settings as they are now'}; "
+        f"acquisition settings {acquisition}{times}; "
         f"at {len(plan.positions)} position(s) ({'; '.join(positions)}). {travel}"
     )
 

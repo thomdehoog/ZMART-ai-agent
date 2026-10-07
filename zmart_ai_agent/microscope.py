@@ -5,7 +5,7 @@ it asks the controller's own commands what this microscope is and what it can
 do: ``get_info`` (the driver's description in plain words, and where images
 go), ``get_actuators`` and ``get_xyz`` (the axes, their motors and how far
 they travel), ``get_state`` (the settings that can be changed, and the
-read-only report), ``get_acquisition_options`` and ``get_procedures``. From
+read-only report), ``get_acquisition_settings`` and ``get_procedures``. From
 the answers it writes the "This microscope" section of the model's
 instructions (``instrument_section``). The controller is not shaped around
 the agent: these are the calls every ZMART driver answers anyway.
@@ -47,7 +47,7 @@ LEARNED_FROM = {
     "actuators": "get_actuators",
     "xyz": "get_xyz",
     "state": "get_state",
-    "options": "get_acquisition_options",
+    "acquisition_settings": "get_acquisition_settings",
     "procedures": "get_procedures",
 }
 NOT_CHOSEN = "no microscope is chosen"
@@ -140,7 +140,7 @@ class Microscope:
                 session.disconnect()
 
     def call(self, command: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        """One controller command; the whole answer, ``{"success", "report"}``.
+        """One controller command; the whole answer, ``{"success", "content"}``.
 
         The driver's refusals pass through unchanged: ValueError for a request
         that is wrong, RuntimeError for a failure at the microscope.
@@ -152,12 +152,12 @@ class Microscope:
             return getattr(self.session, command)(*args, **kwargs)
 
     def read(self, command: str, **kwargs: Any) -> Any:
-        """The report of a reading command; a reading the driver could not make raises."""
+        """The content of a reading command; a reading the driver could not make raises."""
         answer = self.call(command, **kwargs)
         if not answer.get("success"):
-            report = json.dumps(answer.get("report"), default=str)
-            raise RuntimeError(f"{command} did not succeed: {report}")
-        return answer["report"]
+            content = json.dumps(answer.get("content"), default=str)
+            raise RuntimeError(f"{command} did not succeed: {content}")
+        return answer["content"]
 
     # -- readings --------------------------------------------------------------------------
 
@@ -259,7 +259,7 @@ def learn(session: Session) -> dict[str, Any]:
             learned["unanswered"][key] = f"{type(exc).__name__}: {exc}"
             continue
         if isinstance(answer, dict) and answer.get("success"):
-            learned[key] = answer.get("report")
+            learned[key] = answer.get("content")
         else:
             learned["unanswered"][key] = f"{command} answered {json.dumps(answer, default=str)}"
     return learned
@@ -285,7 +285,8 @@ def instrument_section(name: str, learned: dict[str, Any]) -> str:
         axes=missing("xyz", "actuators") or _axes(learned["xyz"], learned["actuators"]),
         settings=missing("state") or json.dumps(state.get("changeable"), default=str),
         observed=missing("state") or json.dumps(state.get("observed"), default=str),
-        options=missing("options") or _listed(learned["options"], _option),
+        acquisition_settings=missing("acquisition_settings")
+        or _listed(learned["acquisition_settings"], _acquisition_setting),
         procedures=missing("procedures") or _listed(learned["procedures"], _procedure),
     )
 
@@ -305,7 +306,7 @@ def _listed(entries: dict[str, Any], line: Callable[[str, Any], str]) -> str:
     return "\n".join(f"  {line(name, spec)}" for name, spec in entries.items()) or "  (none)"
 
 
-def _option(name: str, spec: Any) -> str:
+def _acquisition_setting(name: str, spec: Any) -> str:
     if not isinstance(spec, dict):
         return f"{name}: {json.dumps(spec, default=str)}"
     allowed = spec.get("options")

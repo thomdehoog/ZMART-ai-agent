@@ -2,7 +2,7 @@
 
 Each tool is a few ZMART Controller commands. It checks what it is asked
 against what the driver itself reports (the travel range from ``get_xyz``,
-the setting names from ``get_state``, the options and routines it lists)
+the setting names from ``get_state``, the acquisition settings and routines it lists)
 before acting, and answers with data the model can read: the result, or an
 "error" with what was refused, why, and what to do next (the advice in
 ``instructions.py``). What the driver refuses (a ValueError) comes back as a
@@ -72,7 +72,7 @@ from .settings import (
     CONFIRM_Z_UM,
     FILES_LISTED,
     FOCUS_WORD,
-    LOOK_TYPE,
+    LOOK_LABEL,
     SOURCE_LINES,
     SOURCE_MATCHES,
     WAIT_STEP_S,
@@ -96,7 +96,7 @@ def refusal(
 
 def answered(answer: dict[str, Any], **more: Any) -> dict[str, Any]:
     """A driver's answer for the model; success false carries the advice to say so."""
-    result = {**more, "success": bool(answer.get("success")), "report": answer.get("report")}
+    result = {**more, "success": bool(answer.get("success")), "content": answer.get("content")}
     if not result["success"]:
         result["advice"] = UNCONFIRMED_ADVICE
     return result
@@ -287,11 +287,11 @@ def _move(ctx: RunContext[Microscope], position: dict[str, float], actuators) ->
     except ValueError as exc:
         message = f"the driver refused the move: {exc}. The stage did not move."
         return refusal(ctx, "limit", message, LIMIT_ADVICE)
-    report = answer.get("report") or {}
+    content = answer.get("content") or {}
     return {
         **answered(answer),
         "position": ctx.deps.position(),
-        "actuators": report.get("actuators") if isinstance(report, dict) else None,
+        "actuators": content.get("actuators") if isinstance(content, dict) else None,
     }
 
 
@@ -395,13 +395,11 @@ async def look(ctx: RunContext[Microscope], question: str) -> dict[str, Any]:
         question: what to find out, e.g. "what do you see?", "is it in focus?",
             "is it sharper than the image before?".
     """
-    label = f"{LOOK_TYPE}_{datetime.now():%Y%m%d_%H%M%S}"
-    answer = await asyncio.to_thread(
-        ctx.deps.call, "acquire", acquisition_type=LOOK_TYPE, position_label=label
-    )
+    label = f"{LOOK_LABEL}_{datetime.now():%Y%m%d_%H%M%S}"
+    answer = await asyncio.to_thread(ctx.deps.call, "acquire", position_label=label)
     if not answer.get("success"):
         return answered(answer)
-    files = saved_files(answer.get("report"))
+    files = saved_files(answer.get("content"))
     try:
         image = read_saved(files)
     except ValueError as exc:  # saved, but in a form the agent cannot read
@@ -472,7 +470,7 @@ async def describe_image(
 def plan_acquisition(ctx: RunContext[Microscope], plan: AcquisitionPlan) -> dict[str, Any]:
     """Check a plan against the microscope without moving: the positions against
     the travel range, the channels' settings against the changeable settings,
-    and the options against the acquisition options.
+    and the acquisition settings against the ones the microscope lists.
 
     Returns a plan id and a summary to tell the operator before starting it.
     """
@@ -520,13 +518,13 @@ def check_plan(ctx: RunContext[Microscope], plan: AcquisitionPlan) -> dict | Non
             return refusal(
                 ctx, "invalid", message, OPTIONS_ADVICE, configured_options=list(changeable)
             )
-    menu = ctx.deps.read("get_acquisition_options")
-    for where, options in [("the plan", plan.options)] + [
-        (f"channel {c.name}", c.options) for c in plan.channels
+    menu = ctx.deps.read("get_acquisition_settings")
+    for where, settings in [("the plan", plan.acquisition_settings)] + [
+        (f"channel {c.name}", c.acquisition_settings) for c in plan.channels
     ]:
-        for name, value in options.items():
+        for name, value in settings.items():
             if name not in menu:
-                message = f"{where}: {name!r} is not an acquisition option of this microscope"
+                message = f"{where}: {name!r} is not an acquisition setting of this microscope"
                 return refusal(
                     ctx, "invalid", message, OPTIONS_ADVICE, configured_options=list(menu)
                 )
@@ -564,7 +562,7 @@ async def run_acquisition(ctx: RunContext[Microscope], plan_id: str) -> dict[str
     if ctx.deps.cancel.is_set():  # Stop was pressed while the run was being prepared
         return {"status": "cancelled", "advice": CANCELLED_ADVICE}
 
-    run = Run(ctx.deps, plan, acquisition_type=f"{datetime.now():%Y%m%d_%H%M%S}_{plan_id}")
+    run = Run(ctx.deps, plan, plan_id)
     # The run blocks for as long as the acquisition takes; a thread keeps the
     # agent's own event loop free, which the vision request below needs.
     await asyncio.to_thread(run.go)
@@ -574,7 +572,6 @@ async def run_acquisition(ctx: RunContext[Microscope], plan_id: str) -> dict[str
         "acquisitions": run.acquisitions,
         "finished": run.finished,
         "duration_s": round(run.seconds, 1),
-        "acquisition_type": run.acquisition_type,
         "files_saved": len(run.files),
         "files": run.files[:FILES_LISTED],
     }
@@ -603,8 +600,8 @@ class Run:
     then stays saved and is listed.
     """
 
-    def __init__(self, microscope: Microscope, plan: AcquisitionPlan, acquisition_type: str):
-        self.microscope, self.plan, self.acquisition_type = microscope, plan, acquisition_type
+    def __init__(self, microscope: Microscope, plan: AcquisitionPlan, plan_id: str):
+        self.microscope, self.plan, self.plan_id = microscope, plan, plan_id
         self.acquisitions = 0
         self.files: list[str] = []
         self.unconfirmed: list[dict[str, Any]] = []
@@ -618,7 +615,7 @@ class Run:
         started = time.monotonic()
         try:
             self._steps(started)
-        except ValueError as exc:  # the driver refused a move, a setting or an option
+        except ValueError as exc:  # the driver refused a move or a setting
             self.finished, self.refused = "failed", str(exc)
         except Exception as exc:
             self.finished, self.failure = "failed", f"{type(exc).__name__}: {exc}"
@@ -636,28 +633,28 @@ class Run:
             if channel is not None and channel.settings:
                 answer = microscope.call("set_state", {"changeable": dict(channel.settings)})
                 if not answer.get("success"):  # never image a channel in the wrong settings
-                    report = json.dumps(answer.get("report"), default=str)
-                    raise RuntimeError(f"channel {channel.name} could not be set: {report}")
+                    content = json.dumps(answer.get("content"), default=str)
+                    raise RuntimeError(f"channel {channel.name} could not be set: {content}")
             if self._stopped():
                 return
-            options = {**plan.options, **(channel.options if channel else {})}
+            settings = {
+                **plan.acquisition_settings,
+                **(channel.acquisition_settings if channel else {}),
+            }
             answer = microscope.call(
-                "acquire",
-                acquisition_type=self.acquisition_type,
-                position_label=label,
-                options=options or None,
+                "acquire", position_label=label, acquisition_settings=settings or None
             )
             if not answer.get("success"):
-                self.unconfirmed.append({"label": label, "report": answer.get("report")})
+                self.unconfirmed.append({"label": label, "content": answer.get("content")})
                 continue
             self.acquisitions += 1
-            files = saved_files(answer.get("report"))
+            files = saved_files(answer.get("content"))
             self.files += files
             try:
                 self.last = read_saved(files)
             except ValueError:
                 continue  # saved in a form this cannot show; the files are still listed
-            microscope.on_image(self.last, f"{self.acquisition_type}: {label}")
+            microscope.on_image(self.last, f"{self.plan_id}: {label}")
 
     def _stopped(self) -> bool:
         if self.microscope.cancel.is_set():

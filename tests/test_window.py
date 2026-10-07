@@ -102,7 +102,7 @@ def test_a_driver_without_a_description_is_said_in_the_window(qtbot, open_window
 
     def get_info(handle):
         answer = original(handle)
-        answer["report"].pop("description")
+        answer["content"].pop("description")
         return answer
 
     monkeypatch.setitem(MOCK_OPS, "get_info", get_info)

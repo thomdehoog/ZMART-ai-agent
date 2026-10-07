@@ -50,7 +50,7 @@ Expectations:
     max_calls, min_calls          {tool: n}: called at most or at least n times
     max_tool_calls                at most n tool calls in all
     args            {tool: {arg: value}}: some call carried these arguments; a
-                    dotted name reaches inside ("options.z_planes",
+                    dotted name reaches inside ("acquisition_settings.z_planes",
                     "settings.gain", "entries.range_um")
     state           {key: value}: the microscope afterwards. Keys: x, y, z, every
                     changeable setting by its name (laser_power, gain,
@@ -104,7 +104,7 @@ from zmart_ai_agent import models
 from zmart_ai_agent.agent import Conversation
 from zmart_ai_agent.images import read_saved
 from zmart_ai_agent.microscope import Microscope
-from zmart_ai_agent.settings import LOOK_TYPE, MODEL
+from zmart_ai_agent.settings import LOOK_LABEL, MODEL
 
 HERE = Path(__file__).resolve().parent
 CASES = HERE / "eval_cases.json"
@@ -222,7 +222,7 @@ def driver_as_the_case_says(setup: dict) -> Iterator[None]:
             raise RuntimeError("the camera did not answer")
         answer = original["acquire"](handle, **kwargs)
         if "frame" in setup:  # the picture the case is about, in place of the mock's
-            for path in answer["report"].get("files", []):
+            for path in answer["content"].get("files", []):
                 if path.lower().endswith((".tif", ".tiff")):
                     tifffile.imwrite(path, synthetic_frame(setup["frame"]))
         return answer
@@ -236,11 +236,11 @@ def driver_as_the_case_says(setup: dict) -> Iterator[None]:
 
     def get_procedures(handle):
         listed = {name: {"description": text} for name, text in setup["procedures"].items()}
-        return {"success": True, "report": listed}
+        return {"success": True, "content": listed}
 
     def get_info(handle):
         answer = original["get_info"](handle)
-        answer["report"].pop("description", None)
+        answer["content"].pop("description", None)
         return answer
 
     ops["acquire"], ops["run_procedure"] = acquire, run_procedure
@@ -338,7 +338,7 @@ def _run_once(
             error, state = f"{type(exc).__name__}: {exc}", {}
         finally:
             microscope.disconnect()
-        state.update(_saved(output))
+        state.update(_saved(output, tools))
     return {
         "id": case["id"],
         "category": case.get("category"),
@@ -373,23 +373,25 @@ def tool_calls(messages: list) -> list[dict]:
     ]
 
 
-def _saved(output: Path) -> dict[str, int]:
+def _saved(output: Path, tools: list[dict]) -> dict[str, int]:
     """How many looks were taken, how many runs saved images, and how many image
-    planes those runs saved. The driver saves each acquisition type in a folder
-    of its own: one for the looks, one per run."""
-    if not output.is_dir():
-        return {"looks": 0, "runs": 0, "images": 0}
-    folders = [f for f in output.iterdir() if f.is_dir() and not f.name.startswith("_")]
-    looks = runs = images = 0
-    for folder in folders:
-        saved = [*folder.glob("*.ome.tif"), *folder.glob("*.ome.zarr")]
-        if folder.name == LOOK_TYPE:
-            looks += len(saved)
+    planes those runs saved. The driver saves every picture straight into
+    ``output``; a look's files start with its label, and a run is counted from
+    the run_acquisition answers that saved anything."""
+    saved = [*output.glob("*.ome.tif"), *output.glob("*.ome.zarr")] if output.is_dir() else []
+    looks = images = 0
+    for path in saved:
+        if path.name.startswith(f"{LOOK_LABEL}_"):
+            looks += 1
             continue
-        runs += bool(saved)
-        for path in saved:
-            pixels = read_saved([path]) if path.suffix == ".zarr" else None
-            images += pixels.shape[0] if pixels is not None and pixels.ndim == 3 else 1
+        pixels = read_saved([path]) if path.suffix == ".zarr" else None
+        images += pixels.shape[0] if pixels is not None and pixels.ndim == 3 else 1
+    runs = sum(
+        t["tool"] == "run_acquisition"
+        and '"files_saved": 0' not in t["result"]
+        and '"files_saved"' in t["result"]
+        for t in tools
+    )
     return {"looks": looks, "runs": runs, "images": images}
 
 

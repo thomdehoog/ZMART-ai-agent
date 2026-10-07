@@ -41,7 +41,7 @@ answers anyway:
 | `get_info` | the microscope described in plain words by its driver, and where images are saved |
 | `get_actuators`, `get_xyz` | the axes, their motors, their units and how far each can travel |
 | `get_state` | the settings that can be changed, by the driver's own names, and the read-only report (objective, pixel size, ...) |
-| `get_acquisition_options` | the choices for acquiring, for example a z-stack, with their allowed values |
+| `get_acquisition_settings` | the acquisition settings, the choices for acquiring (for example a z-stack, or a folder for the files), with their allowed values |
 | `get_procedures` | the routines the microscope offers, such as autofocus, each with a description |
 
 From the answers it writes the "This microscope" part of the model's instructions. The rest of
@@ -148,7 +148,7 @@ minutes and tell me whether it drifts*
 | `run_procedure` | runs any routine the microscope lists, after your go-ahead | `get_procedures`, `run_procedure` |
 | `look` | acquires one image here and asks the eyes about it | `acquire` |
 | `ask_eyes` | asks about the images already seen, without a new one | (none) |
-| `plan_acquisition` | checks a plan against the microscope without moving | `get_xyz`, `get_state`, `get_acquisition_options` |
+| `plan_acquisition` | checks a plan against the microscope without moving | `get_xyz`, `get_state`, `get_acquisition_settings` |
 | `run_acquisition` | runs a checked plan, after your go-ahead | `set_xyz`, `set_state`, `acquire` |
 | `schedule`, `cancel_schedule` | sets or cancels an instruction for later | (none) |
 | `search_source`, `read_source` | searches and reads the source of this agent, of the controller and of the connected microscope's driver | (none) |
@@ -156,8 +156,9 @@ minutes and tell me whether it drifts*
 **A plan** is deliberately simple, so that it means the same on every microscope: positions,
 channels and time points, with one acquisition for each combination. A channel is a short name
 and the settings to apply before imaging it, by the driver's own setting names. Anything an
-acquisition itself can do, such as a z-stack, is one of the driver's acquisition options, given
-for the whole plan or per channel. The run goes time point by time point, position by position,
+acquisition itself can do, such as a z-stack, is one of the driver's acquisition settings, given
+for the whole plan or per channel. Each acquisition is saved under a position label made from
+the position, channel and time point names, so the files sort the way the run went. The run goes time point by time point, position by position,
 and channel by channel; the driver saves every acquisition, and the answer lists the files and
 describes the last image.
 
@@ -178,11 +179,11 @@ answer. At most ten schedules, none more often than every five seconds. *Stop mi
 
 - **Checks before acting.** A move is checked against the travel range the driver reports, a
   setting against the names the driver lists as changeable, and a plan against both and the
-  acquisition options. Then the driver checks again, against its own limits.
+  acquisition settings. Then the driver checks again, against its own limits.
 - **Refusals come with advice.** A refused or failed action comes back to the agent with
   what was refused, why (in the driver's own words), and what to do next. After a limit it is
   told to stop and leave the next number to you, rather than try a nearby value. When a name is
-  not known (a setting, a routine, an option), the refusal lists the microscope's own names.
+  not known (a setting, a routine, an acquisition setting), the refusal lists the microscope's own names.
 - **A red banner for refusals.** A limit or an invalid value is also shown in the window
   directly, whatever the agent says.
 - **Big steps are agreed in the chat first.** Starting an acquisition, running a routine other
