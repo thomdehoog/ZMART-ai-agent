@@ -1,7 +1,7 @@
 """The tools: everything the model can ask the microscope to do, one function each.
 
 Each tool is a few ZMART Controller commands. It checks what it is asked
-against what the driver itself reports (the travel range from ``get_xyz``,
+against what the driver itself reports (the canvas from ``get_xyz``,
 the setting names from ``get_state``, the acquisition settings and routines it lists)
 before acting, and answers with data the model can read: the result, or an
 "error" with what was refused, why, and what to do next (the advice in
@@ -60,12 +60,11 @@ from .instructions import (
     LIMIT_ADVICE,
     NO_FOCUS_ADVICE,
     OPTIONS_ADVICE,
-    REGISTER_STEPS,
     START_ADVICE,
     UNCONFIRMED_ADVICE,
 )
 from .memory import _is_operator_turn
-from .microscope import Microscope, identity
+from .microscope import Microscope
 from .plans import AcquisitionPlan, PositionSpec, count_acquisitions, describe, steps
 from .settings import (
     CONFIRM_XY_UM,
@@ -184,18 +183,15 @@ def guarded_tool(fn: Callable) -> Callable:
 
 @guarded_tool
 def check_setup(ctx: RunContext[Microscope]) -> dict[str, Any]:
-    """Which microscopes are registered, and whether the chosen one connects;
-    with the steps for the operator when not.
+    """Which driver is chosen, and whether it connects; with the steps for the
+    operator when not.
 
     Call it when the microscope does not answer. It connects again and reads
     the microscope afresh; it moves nothing.
     """
     microscope = ctx.deps
-    registered = [identity(i) for i in zmart_controller.get_instruments()]
-    chosen = identity(microscope.instrument) if microscope.instrument else None
-    result: dict[str, Any] = {"instruments_registered": registered, "chosen": chosen}
-    if not registered:
-        return {**result, "connected": False, "steps_for_the_operator": REGISTER_STEPS}
+    chosen = microscope.name if microscope.driver is not None else None
+    result: dict[str, Any] = {"driver": chosen}
     if chosen is None:
         return {**result, "connected": False, "steps_for_the_operator": CHOOSE_STEPS}
     try:
@@ -217,8 +213,8 @@ def check_setup(ctx: RunContext[Microscope]) -> dict[str, Any]:
 
 @guarded_tool
 def get_status(ctx: RunContext[Microscope]) -> dict[str, Any]:
-    """Everything the microscope reports now: each axis (position, motor, unit,
-    range) and the state (changeable settings and the read-only report)."""
+    """Everything the microscope reports now: each axis (position in um, motor,
+    canvas) and the state (changeable settings and the read-only report)."""
     return {"position": ctx.deps.read("get_xyz"), "state": ctx.deps.read("get_state")}
 
 
@@ -270,12 +266,20 @@ def move_stage(
 
 
 def _outside(reading: dict[str, Any], axis: str, value: float) -> str | None:
-    """Why ``value`` is outside an axis's range as get_xyz reports it, or None."""
-    low, high = reading.get("range") or (None, None)
+    """Why ``value`` is outside an axis's canvas as get_xyz reports it, or None.
+
+    The canvas is everywhere a picture can show, a little wider than the
+    stage's travel, so a position outside it is certainly out of reach. A
+    position inside it can still be beyond the travel: the driver keeps the
+    travel limits and refuses such a move itself.
+    """
+    low, high = reading.get("canvas") or (None, None)
     if low is None or high is None or low <= value <= high:
         return None
-    unit = reading.get("unit", "um")
-    return f"{axis} = {value:g} {unit} is outside the range [{low:g}, {high:g}] {unit}."
+    return (
+        f"{axis} = {value:g} um is outside the canvas [{low:g}, {high:g}] um, "
+        "everywhere a picture can show, so the stage cannot go there."
+    )
 
 
 def _move(ctx: RunContext[Microscope], position: dict[str, float], actuators) -> dict[str, Any]:
@@ -779,7 +783,8 @@ def source_roots(microscope: Microscope) -> dict[str, Path]:
         "zmart_controller": Path(zmart_controller.__file__).resolve().parent,
     }
     driver = microscope.driver_folder()
-    if driver is not None:
+    # A driver inside the controller, such as its mock, is already readable there.
+    if driver is not None and not any(driver.is_relative_to(r) for r in roots.values()):
         roots[driver.name] = driver
     return roots
 

@@ -3,8 +3,8 @@
 The agent knows nothing about a microscope in advance. When it connects,
 it asks the controller's own commands what this microscope is and what it can
 do: ``get_info`` (the driver's description in plain words, and where images
-go), ``get_actuators`` and ``get_xyz`` (the axes, their motors and how far
-they travel), ``get_state`` (the settings that can be changed, and the
+go), ``get_actuators`` and ``get_xyz`` (the axes, their motors, and the
+canvas: everywhere a picture can show), ``get_state`` (the settings that can be changed, and the
 read-only report), ``get_acquisition_settings`` and ``get_procedures``. From
 the answers it writes the "This microscope" section of the model's
 instructions (``instrument_section``). The controller is not shaped around
@@ -33,8 +33,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from zmart_controller import utils
 from zmart_controller.session import Session, set_instrument
+from zmart_controller.utils import driver_name
 
 from .eyes import Eyes
 from .instructions import INSTRUMENT_SECTION, NO_DESCRIPTION, NOT_CONNECTED, UNANSWERED
@@ -53,25 +53,20 @@ LEARNED_FROM = {
 NOT_CHOSEN = "no microscope is chosen"
 
 
-def identity(instrument: dict[str, Any]) -> dict[str, str]:
-    """The three names of an instrument (vendor, microscope, api), and nothing else.
-
-    A connection dictionary may hold a password or a login, so only these
-    three keys are ever shown to the model or the operator.
-    """
-    return {key: instrument[key] for key in utils.IDENTITY}
-
-
 @dataclass
 class Microscope:
     """One microscope through the ZMART Controller, plus the window's side of the conversation.
 
-    ``instrument`` is one of the dictionaries ``zmart_controller.get_instruments()``
-    lists (or None when none is chosen yet); ``connect`` opens a session on it
-    and learns the microscope.
+    ``driver`` is the microscope's ZMART driver: a Python module with one
+    function per command, such as ``zmart_controller.mock`` (or None when none
+    is chosen yet). ``connection`` is handed to the driver's ``connect`` as it
+    is, for whatever that driver needs, such as a host name; it may hold a
+    password, so it is never shown to the model or the operator. ``connect``
+    opens a session and learns the microscope.
     """
 
-    instrument: dict[str, Any] | None = None
+    driver: Any = None
+    connection: dict[str, Any] | None = None
     on_image: Callable[[np.ndarray, str], None] = lambda image, caption: None
     on_warning: Callable[[str], None] = lambda text: None
     on_tool: Callable[[str, dict], None] = lambda name, args: None  # each tool call, as it starts
@@ -104,21 +99,21 @@ class Microscope:
 
     @property
     def name(self) -> str:
-        """The microscope's three names, as "vendor / microscope / api"."""
-        return " / ".join(identity(self.instrument).values()) if self.instrument else NOT_CHOSEN
+        """The driver's name, such as "zmart_controller.mock"."""
+        return driver_name(self.driver) if self.driver is not None else NOT_CHOSEN
 
     def connect(self) -> None:
-        """Open a session on the chosen instrument and learn the microscope from it.
+        """Plug in the chosen driver, connect, and learn the microscope from it.
 
         An open session is closed first, so this also reconnects. A failure is
         kept in ``connect_error`` (for check_setup and the window) and raised.
         """
         self.disconnect()
-        if self.instrument is None:
+        if self.driver is None:
             self.connect_error = NOT_CHOSEN
-            raise RuntimeError(f"{NOT_CHOSEN}; choose one in the window or with --instrument")
+            raise RuntimeError(f"{NOT_CHOSEN}; choose a driver in the window or with --driver")
         try:
-            session = set_instrument(self.instrument)
+            session = set_instrument(self.driver, self.connection)
         except Exception as exc:
             self.connect_error = f"{type(exc).__name__}: {exc}"
             raise
@@ -196,22 +191,17 @@ class Microscope:
         return instrument_section(self.name, self.learned)
 
     def driver_folder(self) -> Path | None:
-        """The folder of the chosen microscope's driver, as the controller registered it.
+        """The folder of the chosen driver, when the driver is a package (a folder).
 
-        The controller keeps the driver's functions; the file they were loaded
-        from shows where the driver lives. A driver laid out as the controller
-        describes keeps them in a ``zmart_controller`` folder inside it.
+        A driver that is a single file gives no folder: the folder it sits in
+        may hold much else, and the agent should read the driver, not that.
         """
-        if self.instrument is None:
-            return None
-        entry = utils.REGISTRY.get(tuple(identity(self.instrument).values()))
-        if entry is None:
+        if self.driver is None or not hasattr(self.driver, "__path__"):
             return None
         try:
-            plugin = Path(inspect.getfile(entry["ops"]["get_info"])).resolve().parent
-        except (TypeError, OSError):  # a function without a file, such as a built-in
+            return Path(inspect.getfile(self.driver)).resolve().parent
+        except (TypeError, OSError):  # a module without a file
             return None
-        return plugin.parent if plugin.name == utils.PLUGIN_FOLDER else plugin
 
     # -- the conversation's side -------------------------------------------------------------
 
@@ -294,9 +284,8 @@ def instrument_section(name: str, learned: dict[str, Any]) -> str:
 def _axes(xyz: dict[str, Any], actuators: dict[str, Any]) -> str:
     lines = []
     for axis, reading in xyz.items():
-        low, high = reading.get("range") or (None, None)
-        unit = reading.get("unit", "")
-        span = f"from {low:g} to {high:g} {unit}" if None not in (low, high) else "range not given"
+        low, high = reading.get("canvas") or (None, None)
+        span = f"canvas {low:g} to {high:g} um" if None not in (low, high) else "canvas not given"
         motors = ", ".join(str(m) for m in actuators.get(axis, [reading.get("actuator")]))
         lines.append(f"  {axis}: {span}; motors: {motors}")
     return "\n".join(lines)

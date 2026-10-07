@@ -8,7 +8,7 @@ driver's answers; the memory (``memory.py``) keeps a long conversation small;
 the models (``models.py``) are the ways to reach a model. ``Conversation`` is one
 conversation: a message in, the answer out.
 
-    microscope = Microscope(zmart_controller.get_instruments()[0])
+    microscope = Microscope(zmart_controller.mock)
     conversation = Conversation(microscope)
     print(conversation.send("Take a picture here and tell me what you see"))
 

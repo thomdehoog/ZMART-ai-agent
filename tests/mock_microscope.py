@@ -1,10 +1,18 @@
-"""Where the mock microscope is, and how the tests and the evaluation plug it in.
+"""The mock microscope the tests and the evaluation drive: a driver module of its own.
 
-The mock is the pretend microscope that ships with ZMART-controller
-(``tests/mock_zmart_driver`` in a clone of it). Its folder is taken from
-``ZMART_MOCK_DRIVER``, or from a ZMART-controller clone next to this
-repository. It is plugged into the real controller for this session only,
-so nothing is written to the computer's list of drivers.
+The pretend microscope ships with the controller as ``zmart_controller.mock``.
+This module is a driver too: it holds one function per command, as every
+ZMART driver does, and each function hands the call on to the mock. It is
+plugged in exactly as a real driver is::
+
+    zmart_controller.set_instrument(mock_microscope, mock_connection(folder))
+
+Why not plug in ``zmart_controller.mock`` itself? The controller copies a
+driver's functions when it connects, so replacing one of the mock's
+functions afterwards would not reach a session that is already open. Here
+every call looks its function up in ``MOCK_OPS`` at the moment it is made,
+so a test can replace one entry (and put it back) to make the microscope
+answer differently, even in the middle of a conversation.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -14,51 +22,39 @@ License: MIT
 
 from __future__ import annotations
 
-import os
+import sys
 from pathlib import Path
 from typing import Any
 
-import zmart_controller
-from zmart_controller import utils
+import zmart_controller.mock
+from zmart_controller.utils import OPS
 
-MOCK_DRIVER = Path(
-    os.environ.get("ZMART_MOCK_DRIVER")
-    or Path(__file__).resolve().parent.parent.parent
-    / "ZMART-controller"
-    / "tests"
-    / "mock_zmart_driver"
-)
-MOCK = {"vendor": "mock", "microscope": "mock-scope", "api": "mock-api"}
+# The mock's own functions, one per command. A test replaces an entry here.
+MOCK_OPS: dict[str, Any] = {
+    name: getattr(zmart_controller.mock, name) for name in (*OPS, "disconnect")
+}
 
 
-def plug_in_mock() -> bool:
-    """Plug the mock driver in for this session, once; False when it is not there."""
-    if not MOCK_DRIVER.is_dir():
-        return False
-    if tuple(MOCK.values()) not in utils.REGISTRY:
-        zmart_controller.register_driver(MOCK_DRIVER, remember=False)
-    return True
+def _hand_on(name: str):
+    def command(*args, **kwargs):
+        return MOCK_OPS[name](*args, **kwargs)
+
+    command.__name__ = name
+    return command
 
 
-def mock_instrument(output_root: str | Path) -> dict[str, Any]:
-    """The mock as get_instruments lists it, made quick and saving to ``output_root``.
+for _name in MOCK_OPS:
+    globals()[_name] = _hand_on(_name)
+
+# This module, to pass to set_instrument or to Microscope as the driver.
+DRIVER = sys.modules[__name__]
+
+
+def mock_connection(output_root: str | Path) -> dict[str, Any]:
+    """What the mock is told when it connects: be quick, and save to ``output_root``.
 
     ``mock_timing`` and ``output_root`` are the mock's own connection entries:
-    moves and images finish at once, and images go to the folder given.
+    with "instant", moves and images finish at once instead of taking as long
+    as on a real microscope.
     """
-    listed = next(
-        i
-        for i in zmart_controller.get_instruments()
-        if all(i[key] == value for key, value in MOCK.items())
-    )
-    return {**listed, "mock_timing": "instant", "output_root": str(output_root)}
-
-
-def mock_ops() -> dict[str, Any]:
-    """The mock's functions as the controller holds them.
-
-    The controller hands every session this very dictionary, so a test can
-    replace one function here (and put it back) to make the driver answer
-    differently, without changing the agent or the controller.
-    """
-    return utils.REGISTRY[tuple(MOCK.values())]["ops"]
+    return {"mock_timing": "instant", "output_root": str(output_root)}

@@ -2,8 +2,8 @@
 #
 # They drive the mock microscope of ZMART-controller through the real
 # controller, with a scripted model in place of a real one, so they need
-# neither a microscope nor an API key. The controller repository is checked out
-# beside this one for its mock, and the chat window is tested without a screen.
+# neither a microscope nor an API key. The controller repository, which holds the
+# mock, is checked out beside this one, and the chat window is tested without a screen.
 # The evaluation with a real model (tests/evals.py) is not run here: it needs a
 # key and costs calls.
 name: tests
@@ -25,7 +25,6 @@ jobs:
         python: ["3.11", "3.12"]
     env:
       QT_QPA_PLATFORM: offscreen
-      ZMART_MOCK_DRIVER: ${{ github.workspace }}/ZMART-controller/tests/mock_zmart_driver
     steps:
       - uses: actions/checkout@v4
         with:

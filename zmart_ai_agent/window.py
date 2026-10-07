@@ -1,12 +1,14 @@
 """A chat window for the microscope agent.
 
-    zmart-ai-agent
-    zmart-ai-agent --instrument mock/mock-scope/mock-api
-    zmart-ai-agent --driver path\\to\\driver           # plug a driver in for this session
+    zmart-ai-agent                                      # the simulated microscope
+    zmart-ai-agent --driver my_scope_driver             # a driver, by its import name
+    zmart-ai-agent --driver my_scope_driver --connection '{"host": "scope-1"}'
 
-Works with any microscope whose ZMART driver is registered with the ZMART
-Controller on this computer. At the top, the Microscope box lists them and
-connects to the one chosen; with only one registered, it is chosen by itself.
+Works with any microscope that has a ZMART driver installed on this computer.
+A driver is a Python module with one function per command; it is named as
+Python imports it, and ``zmart_controller.mock``, the simulated microscope
+that comes with the controller, is used when none is named. At the top, the
+Driver box shows that name and connects to it; another name can be typed there.
 Below it, the Model panel chooses the model to talk to (a cloud model with its
 API key, a server you run yourself, or a model file on this computer). Left:
 the conversation and the buttons. Right: the latest image, the microscope
@@ -24,21 +26,19 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib
 import json
 import sys
 import threading
 from collections.abc import Callable
-from typing import Any
 
 import numpy as np
-import zmart_controller
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -54,9 +54,9 @@ from PySide6.QtWidgets import (
 from . import models
 from .agent import Conversation
 from .images import as_png
-from .instructions import CHOOSE_STEPS, CONNECT_STEPS, REGISTER_STEPS, SCHEDULED_TURN
+from .instructions import CHOOSE_STEPS, CONNECT_STEPS, SCHEDULED_TURN
 from .local import CONTEXT_TOO_SMALL_HELP, CONTEXT_TOO_SMALL_SIGNS
-from .microscope import Microscope, identity
+from .microscope import Microscope
 from .panel import ModelPanel, PreferencesBox
 from .settings import DEFAULT_PROVIDER, FONT_POINTS
 
@@ -72,24 +72,8 @@ WELCOME = (
 )
 
 
-def instrument_name(instrument: dict[str, Any]) -> str:
-    return " / ".join(identity(instrument).values())
-
-
-def pick_instrument(instruments: list[dict[str, Any]], wanted: str | None) -> dict | None:
-    """The instrument named "vendor/microscope/api", or the only one when none is named.
-
-    With several registered and none named, the answer is None and the window
-    lets the operator choose. A name that matches none raises ValueError,
-    listing the names there are.
-    """
-    if wanted is None:
-        return instruments[0] if len(instruments) == 1 else None
-    for instrument in instruments:
-        if "/".join(identity(instrument).values()) == wanted.strip():
-            return instrument
-    known = ", ".join("/".join(identity(i).values()) for i in instruments) or "none"
-    raise ValueError(f"no registered microscope is called {wanted!r}; registered: {known}")
+# The driver used when none is named: the simulated microscope that comes with the controller.
+DEFAULT_DRIVER = "zmart_controller.mock"
 
 
 class _Signals(QObject):
@@ -104,14 +88,13 @@ class _Signals(QObject):
 
 class AgentWindow(QMainWindow):
     """The chat window. ``endpoint`` is the model to start with; None keeps the
-    conversation's own model (a test passes one in that way) and leaves the panel to the operator.
-    ``instruments`` are the microscopes offered; by default those the controller lists."""
+    conversation's own model (a test passes one in that way) and leaves the panel
+    to the operator."""
 
     def __init__(
         self,
         conversation: Conversation,
         endpoint: models.Endpoint | None = None,
-        instruments: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__()
         self.conversation = conversation
@@ -129,26 +112,16 @@ class AgentWindow(QMainWindow):
         microscope.on_warning = self.signals.warning.emit
         microscope.on_tool = self.signals.tool.emit
 
-        # top: which microscope; only the three names are shown, never the rest of
-        # the connection dictionary, which may hold a password
-        self.instruments = (
-            zmart_controller.get_instruments() if instruments is None else list(instruments)
-        )
-        if microscope.instrument is not None and not any(
-            identity(i) == identity(microscope.instrument) for i in self.instruments
-        ):
-            self.instruments.append(microscope.instrument)
-        self.instrument_box = QComboBox()
-        self.instrument_box.addItems([instrument_name(i) for i in self.instruments])
-        if microscope.instrument is not None:
-            self.instrument_box.setCurrentText(instrument_name(microscope.instrument))
-        else:
-            self.instrument_box.setCurrentIndex(-1)
+        # top: which driver, by its import name; the connection entries are never
+        # shown, since they may hold a password
+        self.driver_box = QLineEdit(placeholderText=f"the driver, e.g. {DEFAULT_DRIVER}")
+        if microscope.driver is not None:
+            self.driver_box.setText(microscope.name)
+        self.driver_box.returnPressed.connect(self.connect_chosen)
         self.connect_button = QPushButton("Connect", clicked=self.connect_chosen)
-        self.connect_button.setEnabled(bool(self.instruments))
         microscope_row = QHBoxLayout()
-        microscope_row.addWidget(QLabel("Microscope:"))
-        microscope_row.addWidget(self.instrument_box, 1)
+        microscope_row.addWidget(QLabel("Driver:"))
+        microscope_row.addWidget(self.driver_box, 1)
         microscope_row.addWidget(self.connect_button)
 
         # left: the conversation
@@ -221,10 +194,8 @@ class AgentWindow(QMainWindow):
         self._say("agent", WELCOME, escape=False)
         if microscope.session is not None:
             self._say_connected()
-        elif microscope.instrument is not None:
+        elif microscope.driver is not None:
             self._connect()
-        elif not self.instruments:
-            self._say_steps(REGISTER_STEPS)
         else:
             self._say_steps(CHOOSE_STEPS)
         self._refresh_status()
@@ -235,22 +206,25 @@ class AgentWindow(QMainWindow):
     # -- the microscope ---------------------------------------------------------------
 
     def connect_chosen(self) -> None:
-        """Connect to the microscope chosen in the Microscope box.
+        """Plug in the driver named in the Driver box, and connect to its microscope.
 
-        Choosing another microscope starts a new conversation: positions,
+        Choosing another driver starts a new conversation: positions,
         settings and plans of one microscope mean nothing on another.
         """
-        index = self.instrument_box.currentIndex()
-        if self.busy or index < 0:
+        name = self.driver_box.text().strip()
+        if self.busy or not name:
+            return
+        try:
+            chosen = importlib.import_module(name)
+        except Exception as exc:
+            self._say("system", f"Python could not load the driver {name!r}: {exc}")
+            self._say_steps(CHOOSE_STEPS)
             return
         microscope = self.conversation.microscope
-        chosen = self.instruments[index]
-        if microscope.instrument is not None and identity(microscope.instrument) != identity(
-            chosen
-        ):
+        if microscope.driver is not None and microscope.driver is not chosen:
             self.conversation.clear()
             self._say("system", "Another microscope: the conversation starts afresh.")
-        microscope.instrument = chosen
+        microscope.driver = chosen
         self._connect()
         self._refresh_status()
 
@@ -465,7 +439,7 @@ class AgentWindow(QMainWindow):
         self.send_button.setEnabled(not busy)
         self.prompt.setEnabled(not busy)
         self.clear_button.setEnabled(not busy)
-        self.connect_button.setEnabled(not busy and bool(self.instruments))
+        self.connect_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.send_button.setText("Working ..." if busy else "Send")
 
@@ -490,17 +464,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Chat with the ZMART AI agent, on any microscope with a ZMART driver."
     )
     parser.add_argument(
-        "--instrument",
-        default=None,
-        help="the microscope, as vendor/microscope/api; without it, the only one registered "
-        "is used, or the window asks",
+        "--driver",
+        default=DEFAULT_DRIVER,
+        help="the microscope's ZMART driver, by the name Python imports it as; without it, "
+        f"{DEFAULT_DRIVER}, the simulated microscope",
     )
     parser.add_argument(
-        "--driver",
-        action="append",
-        default=[],
-        help="a driver's folder, plugged in for this session only (may be given more than "
-        "once); drivers registered on this computer are found by themselves",
+        "--connection",
+        type=json.loads,
+        default=None,
+        help='what the driver needs to connect, as JSON, e.g. \'{"host": "scope-1"}\'; '
+        "the driver's README says which entries it takes",
     )
     parser.add_argument(
         "--model",
@@ -514,19 +488,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    for driver in args.driver:
-        zmart_controller.register_driver(driver, remember=False)
     try:
-        chosen = pick_instrument(zmart_controller.get_instruments(), args.instrument)
-    except ValueError as exc:
-        print(exc, file=sys.stderr)
+        driver = importlib.import_module(args.driver)
+    except ImportError as exc:
+        print(f"Python could not load the driver {args.driver!r}: {exc}", file=sys.stderr)
         return 2
 
     app = QApplication(sys.argv[:1])
     font = QFont(app.font())
     font.setPointSize(args.font_size)
     app.setFont(font)
-    microscope = Microscope(chosen, challenge_no_tool=True)
+    microscope = Microscope(driver, args.connection, challenge_no_tool=True)
     endpoint = (
         models.Endpoint.from_name(args.model)
         if args.model

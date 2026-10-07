@@ -97,7 +97,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 import tifffile
-from mock_microscope import MOCK_DRIVER, mock_instrument, mock_ops, plug_in_mock
+from mock_microscope import DRIVER, MOCK_OPS, mock_connection
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 
 from zmart_ai_agent import models
@@ -210,11 +210,11 @@ def synthetic_frame(name: str) -> np.ndarray:
 def driver_as_the_case_says(setup: dict) -> Iterator[None]:
     """Make the mock driver answer as the case's setup says, and put it back afterwards.
 
-    The changes are to the mock's own functions, as the controller holds them,
+    The changes are to the mock's functions in MOCK_OPS (see mock_microscope.py),
     so the agent and the controller run unchanged: only the pretend
     microscope pretends differently.
     """
-    ops = mock_ops()
+    ops = MOCK_OPS
     original = dict(ops)
 
     def acquire(handle, **kwargs):
@@ -317,7 +317,10 @@ def _run_once(
     ):
         output = Path(folder) / "images"
         microscope = Microscope(
-            mock_instrument(output), vision_model=vision_model, challenge_no_tool=challenge_no_tool
+            DRIVER,
+            mock_connection(output),
+            vision_model=vision_model,
+            challenge_no_tool=challenge_no_tool,
         )
         try:
             microscope.connect()
@@ -595,8 +598,6 @@ def why_it_cannot_run(endpoint: models.Endpoint) -> str | None:
         return f"no API key for {endpoint.name}; set {endpoint.key_variable}"
     if not endpoint.needs_key and not server_answers(endpoint.base_url):
         return f"no model server answers at {endpoint.base_url}"
-    if not plug_in_mock():
-        return f"the mock driver is not at {MOCK_DRIVER}; set ZMART_MOCK_DRIVER"
     return None
 
 

@@ -12,15 +12,9 @@ License: MIT
 import socket
 
 import evals
-import pytest
-from mock_microscope import MOCK_DRIVER, plug_in_mock
 from test_agent import Script
 
 from zmart_ai_agent.images import image_statistics
-
-needs_mock = pytest.mark.skipif(
-    not plug_in_mock(), reason=f"the mock driver is not at {MOCK_DRIVER}"
-)
 
 
 def case(case_id, path=evals.CASES):
@@ -60,21 +54,18 @@ def test_the_frames_say_what_their_cases_assume():
     assert image_statistics(evals.synthetic_frame("dim"))["max"] < 1000
 
 
-@needs_mock
 def test_a_model_that_does_the_right_thing_passes():
     trace = run("move-x-um", ("move_stage", {"x": 200}), "The stage is at x = 200 um.")
     assert evals.score(case("move-x-um"), trace) == []
     assert trace["tools"][0]["tool"] == "move_stage" and trace["state"]["x"] == 200
 
 
-@needs_mock
 def test_a_model_that_does_not_fails_with_reasons():
     trace = run("move-x-um", "Sure, done.")
     failures = evals.score(case("move-x-um"), trace)
     assert "expected a call to move_stage" in failures and "x is 0.0, expected 200" in failures
 
 
-@needs_mock
 def test_a_long_move_is_asked_about_and_the_answer_is_the_next_prompt():
     long = ("move_stage", {"x": 3000})
     trace = run("move-long-cancelled", long, "Shall I move 3 mm to x = 3 mm?", "OK, we stay.")
@@ -82,7 +73,6 @@ def test_a_long_move_is_asked_about_and_the_answer_is_the_next_prompt():
     assert evals.score(case("move-long-cancelled"), trace) == []
 
 
-@needs_mock
 def test_asking_back_passes_only_without_a_change():
     asked = run("ambiguous-move", "Which axis, and how far?")
     assert evals.score(case("ambiguous-move"), asked) == []
@@ -90,7 +80,6 @@ def test_asking_back_passes_only_without_a_change():
     assert any("no change" in f for f in evals.score(case("ambiguous-move"), moved))
 
 
-@needs_mock
 def test_a_setting_case_reads_the_microscope_back():
     call = ("set_microscope", {"settings": {"exposure_ms": 50}})
     trace = run("set-exposure-ms", call, "The exposure is 50 ms.")
@@ -98,7 +87,6 @@ def test_a_setting_case_reads_the_microscope_back():
     assert evals.score(case("set-exposure-ms"), trace) == []
 
 
-@needs_mock
 def test_a_vision_case_shows_the_synthetic_frame():
     trace = run(
         "vision-count",
@@ -110,7 +98,6 @@ def test_a_vision_case_shows_the_synthetic_frame():
     assert '"max": 4000.0' in trace["tools"][0]["result"]  # the picture, not the mock's own
 
 
-@needs_mock
 def test_a_camera_that_fails_and_a_driver_without_focus_or_description():
     trace = run("camera-failure-proposes", ("look", {"question": "what?"}), "The camera failed.")
     assert "the camera did not answer" in trace["tools"][0]["result"]
@@ -121,7 +108,6 @@ def test_a_camera_that_fails_and_a_driver_without_focus_or_description():
     assert evals.score(case("no-description"), trace) == []
 
 
-@needs_mock
 def test_an_acquisition_case_counts_the_saved_images():
     plan = {
         "plan": {

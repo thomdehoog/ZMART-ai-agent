@@ -39,7 +39,7 @@ answers anyway:
 | It asks | And learns |
 |---|---|
 | `get_info` | the microscope described in plain words by its driver, and where images are saved |
-| `get_actuators`, `get_xyz` | the axes, their motors, their units and how far each can travel |
+| `get_actuators`, `get_xyz` | the axes and their motors, and each axis's canvas: everywhere a picture can show along it, in micrometres, a little wider than the stage's travel |
 | `get_state` | the settings that can be changed, by the driver's own names, and the read-only report (objective, pixel size, ...) |
 | `get_acquisition_settings` | the acquisition settings, the choices for acquiring (for example a z-stack, or a folder for the files), with their allowed values |
 | `get_procedures` | the routines the microscope offers, such as autofocus, each with a description |
@@ -50,7 +50,7 @@ ZMART vocabulary, the units, and the safety rules. So the controller is not shap
 agent; a driver that answers the ZMART commands is all it needs.
 
 The description in `get_info` is optional for a driver (see the controller's
-[driver guide](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/driver.md)). Without
+[driver guide](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/1_plug_in_a_driver/README.md)). Without
 it, the agent still connects and works from the other answers, and both the window and the
 model are told that the driver gives no description: the agent then knows the settings by
 name, but not what they mean or in which unit.
@@ -69,7 +69,7 @@ when the description does not say, the agent asks you once.
 ## Try it yourself
 
 On the microscope computer, the ZMART Controller and the microscope's driver come first (see
-the controller's [setup guide](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/setup.md)).
+the controller's [guide to plugging in a driver](https://github.com/thomdehoog/ZMART-controller/blob/main/docs/1_plug_in_a_driver/README.md)).
 Then, in the same Python environment:
 
 ```
@@ -83,18 +83,25 @@ One command opens the window:
 zmart-ai-agent
 ```
 
-`python -m zmart_ai_agent` does the same. The **Microscope** line at the top lists the
-microscopes registered on this computer; with only one, it is chosen and connected by itself.
-`--instrument vendor/microscope/api` chooses one from the command line, and `--driver
-path\to\driver` plugs a driver in for this session only. `--font-size 13` makes the letters
-bigger (the default is 11), and the divider between the chat and the image can be dragged.
+`python -m zmart_ai_agent` does the same. Without anything else, it connects to the mock
+microscope that comes with the controller (`zmart_controller.mock`), a pretend microscope
+to try the agent on without hardware.
 
-To try it without a microscope, use the mock microscope that comes with a clone of
-ZMART-controller:
+A driver is a Python module with one function per ZMART command, and the agent plugs it in
+by the name Python imports it as. Name your microscope's driver with `--driver`, and give
+what it needs to connect, if anything, with `--connection` as JSON (the driver's README says
+which entries it takes):
 
 ```
-zmart-ai-agent --driver path\to\ZMART-controller\tests\mock_zmart_driver
+zmart-ai-agent --driver my_scope_driver
+zmart-ai-agent --driver my_scope_driver --connection "{\"host\": \"scope-1\"}"
 ```
+
+The **Driver** box at the top of the window shows that name; type another one there and press
+Connect to switch microscopes, which starts the conversation afresh. What is given with
+`--connection` is never shown in the window or to the model, since it may hold a password.
+`--font-size 13` makes the letters bigger (the default is 11), and the divider between the chat
+and the image can be dragged.
 
 Images are saved where the driver saves them (its `output_root`, which the window names when it
 connects). Each acquisition is saved by the driver as OME-TIFF or OME-Zarr, and the agent
@@ -140,7 +147,7 @@ minutes and tell me whether it drifts*
 
 | Tool | What it does | Controller commands |
 |---|---|---|
-| `check_setup` | lists the registered microscopes and connects (again) to the chosen one, with the steps for you when that fails | `get_instruments`, `set_instrument`, and the readings above |
+| `check_setup` | names the chosen driver and connects (again) to its microscope, with the steps for you when that fails | `set_instrument`, and the readings above |
 | `get_status` | reads the position and the state | `get_xyz`, `get_state` |
 | `move_stage` | moves to an absolute position, optionally with a named motor | `get_xyz`, `set_xyz` |
 | `set_microscope` | changes settings, by the names the driver lists as changeable | `get_state`, `set_state` |
@@ -177,9 +184,10 @@ answer. At most ten schedules, none more often than every five seconds. *Stop mi
 
 ### How it stays safe
 
-- **Checks before acting.** A move is checked against the travel range the driver reports, a
-  setting against the names the driver lists as changeable, and a plan against both and the
-  acquisition settings. Then the driver checks again, against its own limits.
+- **Checks before acting.** A move is checked against the canvas the driver reports (a
+  position outside it is certainly out of reach), a setting against the names the driver lists
+  as changeable, and a plan against both and the acquisition settings. Then the driver checks
+  again, against its own travel limits, and refuses a move beyond them.
 - **Refusals come with advice.** A refused or failed action comes back to the agent with
   what was refused, why (in the driver's own words), and what to do next. After a limit it is
   told to stop and leave the next number to you, rather than try a nearby value. When a name is
@@ -217,10 +225,9 @@ meant. Those are the cases to watch with a cheaper model; the driver's limits st
 
 ## Testing
 
-The tests drive the mock microscope from ZMART-controller through the real controller, with a
-scripted model in place of the real one, so they need neither a microscope nor an API key. They
-find the mock in a ZMART-controller clone next to this folder, or wherever `ZMART_MOCK_DRIVER`
-points.
+The tests drive the mock microscope that comes with ZMART-controller (`zmart_controller.mock`)
+through the real controller, with a scripted model in place of the real one, so they need
+neither a microscope nor an API key.
 
 ```
 pip install -e ".[test]"

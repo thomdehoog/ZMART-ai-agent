@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from mock_microscope import MOCK, mock_ops, plug_in_mock
+from mock_microscope import DRIVER, MOCK_OPS
 from pydantic_ai.messages import (
     BinaryContent,
     ModelResponse,
@@ -73,8 +73,8 @@ class Script:
 
 
 @pytest.fixture
-def microscope(instrument):
-    scope = Microscope(instrument)
+def microscope(connection):
+    scope = Microscope(DRIVER, connection)
     scope.connect()
     scope.vision = False  # no vision model in most tests; those with one say so
     scope.images, scope.warnings, scope.tools = [], [], []
@@ -120,23 +120,20 @@ def saved_images(microscope):
     )
 
 
-MOCK_OPS = mock_ops() if plug_in_mock() else {}  # the driver's functions, to replace
-
-
 # -- connecting: the agent learns the microscope from the controller -----------------
 
 
 def test_connecting_learns_the_microscope_from_the_controller(microscope):
     section = microscope.instrument_section()
-    assert "mock / mock-scope / mock-api" in section
+    assert "This microscope: mock_microscope." in section
     assert "A pretend widefield fluorescence microscope" in section  # get_info's description
     assert "3 is 40x/0.95 Air" in section
-    assert "x: from -5000 to 5000 um" in section and "motors: motoric, piezo" in section
+    assert "x: canvas -5" in section and "motors: motoric, piezo" in section
     assert '"laser_power": 10.0' in section and '"objective": "10x/0.30 Air"' in section
     assert "z_planes" in section and "ome-zarr" in section  # get_acquisition_settings
     assert "autofocus: Take a short z-stack" in section  # get_procedures, with its description
     assert microscope.learned["info"]["output_root"] in section
-    assert "client" not in section  # nothing from the connection dict beyond its name
+    assert "mock_timing" not in section  # nothing from the connection dict
 
 
 def test_the_model_is_told_this_microscope_and_the_generic_rules(microscope):
@@ -149,7 +146,7 @@ def test_the_model_is_told_this_microscope_and_the_generic_rules(microscope):
     assert "which way +z points" in told  # z: from the description, or asked once
 
 
-def test_a_driver_without_a_description_still_connects_and_says_so(instrument, monkeypatch):
+def test_a_driver_without_a_description_still_connects_and_says_so(connection, monkeypatch):
     def get_info(handle):
         answer = original(handle)
         answer["content"].pop("description")
@@ -157,7 +154,7 @@ def test_a_driver_without_a_description_still_connects_and_says_so(instrument, m
 
     original = MOCK_OPS["get_info"]
     monkeypatch.setitem(MOCK_OPS, "get_info", get_info)
-    scope = Microscope(instrument)
+    scope = Microscope(DRIVER, connection)
     try:
         scope.connect()
         section = scope.instrument_section()
@@ -168,7 +165,7 @@ def test_a_driver_without_a_description_still_connects_and_says_so(instrument, m
         scope.disconnect()
 
 
-def test_without_a_microscope_the_model_is_told_and_check_setup_lists_them(instrument):
+def test_without_a_microscope_the_model_is_told_and_check_setup_says_how():
     scope = Microscope(None)
     conversation, script = talk(scope, ("check_setup", {}), "Choose a microscope first.")
     assert conversation.send("where is the stage?") == "Choose a microscope first."
@@ -176,18 +173,19 @@ def test_without_a_microscope_the_model_is_told_and_check_setup_lists_them(instr
     assert "not connected" in prompt and "no microscope is chosen" in prompt
     assert "No microscope is connected" in script.requests[0][-1].instructions
     result = tool_results(conversation)[0]
-    assert result["connected"] is False and MOCK in result["instruments_registered"]
-    assert all("client" not in i for i in result["instruments_registered"])  # names only
+    assert result["connected"] is False and result["driver"] is None
     assert "steps_for_the_operator" in result
 
 
-def test_a_connect_error_is_reported_by_check_setup(instrument):
-    scope = Microscope({**instrument, "mock_timing": "bogus"})  # the mock refuses to connect
+def test_a_connect_error_is_reported_by_check_setup(connection):
+    # the mock refuses to connect
+    scope = Microscope(DRIVER, {**connection, "mock_timing": "bogus"})
     conversation, _ = talk(scope, ("check_setup", {}), "It did not connect.")
     conversation.send("is the microscope there?")
     result = tool_results(conversation)[0]
     assert result["connected"] is False and "mock_timing" in result["error"]
-    scope.instrument = instrument  # fixed: check_setup connects and learns it
+    assert result["driver"] == "mock_microscope"  # its name only, never the connection
+    scope.connection = connection  # fixed: check_setup connects and learns it
     conversation, _ = talk(scope, ("check_setup", {}), "Connected.")
     conversation.send("try again")
     result = tool_results(conversation)[0]
@@ -227,16 +225,12 @@ def test_status(microscope):
     conversation, _ = talk(microscope, ("get_status", {}), "Here is the status.")
     conversation.send("where are we?")
     status = tool_results(conversation)[0]
-    # The controller's answer, passed on as it is: the position, the motor, the
-    # unit, how far the stage travels, and how far a picture reaches beyond that.
+    # The controller's answer, passed on as it is: the position and the motor, and
+    # the canvas, everywhere a picture can show, a little wider than the travel.
     x = status["position"]["x"]
-    assert {k: x[k] for k in ("value", "actuator", "unit", "range")} == {
-        "value": 0.0,
-        "actuator": "motoric",
-        "unit": "um",
-        "range": [-5000.0, 5000.0],
-    }
-    assert x["reach"][0] <= -5000.0 and x["reach"][1] >= 5000.0
+    assert set(x) == {"value", "actuator", "canvas"}
+    assert x["value"] == 0.0 and x["actuator"] == "motoric"
+    assert x["canvas"][0] < -5000.0 and x["canvas"][1] > 5000.0
     assert status["state"]["changeable"]["exposure_ms"] == 10.0
     assert status["state"]["observed"]["objective"] == "10x/0.30 Air"
 
@@ -267,9 +261,22 @@ def test_limit_breach_is_refused_with_advice_and_shown_in_the_window(microscope)
     conversation.send("go to z 2 mm")
     error = tool_results(conversation)[0]["error"]
     assert error["code"] == "limit" and error["advice"] == LIMIT_ADVICE
-    assert error["message"].startswith("z = 2000 um is outside the range [-500, 500] um")
+    assert error["message"].startswith("z = 2000 um is outside the canvas [-500, 500] um")
     assert microscope.warnings == [error["message"]]
     assert position(microscope) == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
+def test_a_move_inside_the_canvas_but_beyond_the_travel_is_refused_by_the_driver(microscope):
+    # The canvas is a little wider than the travel (x: -5000 to 5000 um on the mock),
+    # so the agent lets this move through and the driver refuses it.
+    beyond = ("move_stage", {"x": 5001})
+    assert microscope.read("get_xyz")["x"]["canvas"][1] > 5001
+    conversation, _ = talk(microscope, beyond, "Shall I?", beyond, "It is beyond the travel.")
+    conversation.send("go to x = 5001 um")
+    conversation.send("yes")
+    error = tool_results(conversation)[1]["error"]
+    assert error["code"] == "limit" and error["message"].startswith("the driver refused the move")
+    assert position(microscope)["x"] == 0.0
 
 
 def test_a_move_the_driver_refuses_is_a_refusal_and_the_stage_stays(microscope):
@@ -895,7 +902,7 @@ def test_time_points_and_ome_zarr(microscope):
 @pytest.mark.parametrize(
     ("change", "code", "message"),
     [
-        ({"positions": [{"x": 100, "y": 200, "z": 2000}]}, "limit", "outside the range"),
+        ({"positions": [{"x": 100, "y": 200, "z": 2000}]}, "limit", "outside the canvas"),
         ({"positions": [{"x": 1, "y": 1, "z": 0, "name": "c"}] * 2}, "invalid", "more than once"),
         ({"channels": [{"name": "c", "settings": {"power": 5}}]}, "invalid", "'power'"),
         ({"acquisition_settings": {"planes": 3}}, "invalid", "'planes'"),
@@ -974,9 +981,7 @@ def test_the_source_of_the_agent_the_controller_and_the_driver_can_be_read(micro
     conversation.send("how does a move reach the microscope?")
     found, read = tool_results(conversation)
     assert any(m.startswith("zmart_controller/session.py:") for m in found["matches"])
-    assert any(
-        m.startswith("mock_zmart_driver/zmart_controller/__init__.py:") for m in found["matches"]
-    )
+    assert any(m.startswith("zmart_controller/mock/driver.py:") for m in found["matches"])
     assert read["lines"].startswith("1 to 3 of") and read["text"].startswith("1: ")
 
 
@@ -985,7 +990,7 @@ def test_nothing_outside_those_sources_can_be_read(microscope):
     conversation.send("read that file")
     error = tool_results(conversation)[0]["error"]
     assert error["code"] == "not_found" and "zmart_ai_agent/tools.py" in error["configured_options"]
-    parts = ("zmart_ai_agent/", "zmart_controller/", "mock_zmart_driver/")
+    parts = ("zmart_ai_agent/", "zmart_controller/")
     assert all(f.startswith(parts) for f in error["configured_options"])
     assert microscope.warnings == []  # not a fault at the microscope: no red banner
 

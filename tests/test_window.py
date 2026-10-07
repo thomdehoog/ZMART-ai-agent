@@ -8,15 +8,13 @@ License: MIT
 
 import os
 import time
-from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
-import zmart_controller
-from mock_microscope import MOCK
+from mock_microscope import DRIVER
 from PySide6.QtWidgets import QMessageBox
 from test_agent import MOCK_OPS, Script, position, saved_images
 
@@ -24,15 +22,15 @@ from zmart_ai_agent import window as window_module
 from zmart_ai_agent.agent import Conversation
 from zmart_ai_agent.instructions import NO_DESCRIPTION
 from zmart_ai_agent.microscope import Microscope
-from zmart_ai_agent.window import AgentWindow, pick_instrument
+from zmart_ai_agent.window import AgentWindow
 
 
 @pytest.fixture
-def open_window(qtbot, instrument):
+def open_window(qtbot, connection):
     scopes = []
 
-    def make(*steps, vision=None, connect=True, chosen=instrument):
-        microscope = Microscope(chosen)
+    def make(*steps, vision=None, connect=True, driver=DRIVER, connected_with=connection):
+        microscope = Microscope(driver, connected_with)
         scopes.append(microscope)
         if connect:
             microscope.connect()
@@ -40,9 +38,7 @@ def open_window(qtbot, instrument):
             microscope.vision_model = Script(vision).model()
         else:
             microscope.vision = False  # no vision model: the look and run tools skip it
-        window = AgentWindow(
-            Conversation(microscope, model=Script(*steps).model()), instruments=[instrument]
-        )
+        window = AgentWindow(Conversation(microscope, model=Script(*steps).model()))
         # A failed test may leave a turn running; the window refuses to close then
         # (with a dialog nobody can click), so the turn is ended before the close.
         qtbot.addWidget(window, before_close_func=settle)
@@ -91,10 +87,10 @@ def test_a_question_and_its_answer(qtbot, open_window):
 def test_the_window_says_which_microscope_and_where_images_go(qtbot, open_window):
     window = open_window()
     transcript = window.transcript.toPlainText()
-    assert "Connected to mock / mock-scope / mock-api" in transcript
+    assert "Connected to mock_microscope" in transcript
     output_root = window.conversation.microscope.learned["info"]["output_root"]
     assert output_root in transcript and NO_DESCRIPTION not in transcript
-    assert window.instrument_box.currentText() == "mock / mock-scope / mock-api"
+    assert window.driver_box.text() == "mock_microscope"
 
 
 def test_a_driver_without_a_description_is_said_in_the_window(qtbot, open_window, monkeypatch):
@@ -111,39 +107,23 @@ def test_a_driver_without_a_description_is_said_in_the_window(qtbot, open_window
 
 
 def test_choosing_and_connecting_a_microscope(qtbot, open_window):
-    window = open_window("Connected now.", connect=False, chosen=None)
+    window = open_window("Connected now.", connect=False, driver=None)
     transcript = window.transcript.toPlainText()
-    assert "Choose the microscope" in transcript and "not connected" in window.status.text()
-    window.instrument_box.setCurrentIndex(0)
+    assert "Driver box" in transcript and "not connected" in window.status.text()
+    window.driver_box.setText("no_such_driver")
+    window.connect_button.click()
+    assert "could not load the driver 'no_such_driver'" in window.transcript.toPlainText()
+    window.driver_box.setText("mock_microscope")
     window.connect_button.click()
     assert window.conversation.microscope.session is not None
-    assert "Connected to mock / mock-scope / mock-api" in window.transcript.toPlainText()
+    assert "Connected to mock_microscope" in window.transcript.toPlainText()
     assert "x 0.0, y 0.0, z 0.0 um" in window.status.text()
 
 
-def test_a_microscope_that_does_not_connect_says_why(qtbot, open_window, instrument):
-    window = open_window(connect=False, chosen={**instrument, "mock_timing": "bogus"})
+def test_a_microscope_that_does_not_connect_says_why(qtbot, open_window, connection):
+    window = open_window(connect=False, connected_with={**connection, "mock_timing": "bogus"})
     assert "could not connect" in window.transcript.toPlainText()
     assert "mock_timing" in window.transcript.toPlainText()
-
-
-def test_with_no_microscope_registered_the_window_says_how(qtbot, instrument, monkeypatch):
-    monkeypatch.setattr(zmart_controller, "get_instruments", list)
-    microscope = Microscope(None, vision=False)
-    window = AgentWindow(Conversation(microscope, model=Script().model()))
-    qtbot.addWidget(window)
-    assert "No microscope is registered" in window.transcript.toPlainText()
-    assert window.instrument_box.count() == 0 and not window.connect_button.isEnabled()
-
-
-def test_pick_instrument_by_name_or_the_only_one():
-    one = {**MOCK, "client": "secret"}
-    other = {"vendor": "acme", "microscope": "a5", "api": "sdk"}
-    assert pick_instrument([one], None) is one  # the only one
-    assert pick_instrument([one, other], None) is None  # several: the window asks
-    assert pick_instrument([one, other], "acme/a5/sdk") is other
-    with pytest.raises(ValueError, match="mock/mock-scope/mock-api"):
-        pick_instrument([one, other], "acme/a6/sdk")
 
 
 def test_a_long_move_is_asked_about_in_the_chat(qtbot, open_window):
@@ -188,7 +168,7 @@ def test_clear_context_empties_the_chat_and_the_memory(qtbot, open_window):
 def test_a_limit_breach_shows_the_red_banner(qtbot, open_window):
     window = open_window(("move_stage", {"z": 2000}), "That is outside the limits.")
     ask(qtbot, window, "go to z 2 mm")
-    assert window.warning.isVisibleTo(window) and "outside the range" in window.warning.text()
+    assert window.warning.isVisibleTo(window) and "outside the canvas" in window.warning.text()
     assert position(window.conversation.microscope)["z"] == 0.0
 
 
@@ -329,7 +309,7 @@ def test_the_window_will_not_close_mid_action(qtbot, open_window, monkeypatch):
     assert window.close() is True
 
 
-def test_main_plugs_in_a_driver_for_the_session_and_picks_the_instrument(monkeypatch, instrument):
+def test_main_plugs_in_the_driver_it_is_given(monkeypatch):
     opened = {}
 
     class FakeApp:
@@ -348,20 +328,19 @@ def test_main_plugs_in_a_driver_for_the_session_and_picks_the_instrument(monkeyp
             return 0
 
     class FakeWindow:
-        def __init__(self, conversation, endpoint=None, instruments=None):
+        def __init__(self, conversation, endpoint=None):
             opened["microscope"] = conversation.microscope
 
         def show(self):
             pass
 
-    registered = []
     monkeypatch.setattr(window_module, "QApplication", FakeApp)
     monkeypatch.setattr(window_module, "AgentWindow", FakeWindow)
-    monkeypatch.setattr(
-        zmart_controller, "register_driver", lambda path, remember: registered.append(remember)
-    )
-    driver = str(Path(__file__).parent)
-    assert window_module.main(["--driver", driver, "--instrument", "mock/mock-scope/mock-api"]) == 0
-    assert registered == [False]  # for this session only
-    assert opened["microscope"].name == "mock / mock-scope / mock-api"
-    assert window_module.main(["--instrument", "nope/nope/nope"]) == 2
+    assert window_module.main([]) == 0  # no driver named: the simulated microscope
+    assert opened["microscope"].name == "zmart_controller.mock"
+    assert opened["microscope"].connection is None
+    argv = ["--driver", "mock_microscope", "--connection", '{"mock_timing": "instant"}']
+    assert window_module.main(argv) == 0
+    assert opened["microscope"].driver is DRIVER
+    assert opened["microscope"].connection == {"mock_timing": "instant"}
+    assert window_module.main(["--driver", "no_such_driver"]) == 2
