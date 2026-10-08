@@ -102,7 +102,7 @@ def tool_results(conversation):
 def position(microscope):
     """Where the stage is, read back through the controller."""
     reading = microscope.session.get_xyz()["content"]
-    return {axis: reading[axis]["value"] for axis in "xyz"}
+    return {axis: reading[axis]["position"] for axis in "xyz"}
 
 
 def settings(microscope):
@@ -225,11 +225,13 @@ def test_status(microscope):
     conversation, _ = talk(microscope, ("get_status", {}), "Here is the status.")
     conversation.send("where are we?")
     status = tool_results(conversation)[0]
-    # The controller's answer, passed on as it is: the position and the motor, and
-    # the canvas, everywhere a picture can show, a little wider than the travel.
+    # The controller's answer, passed on as it is: the position in micrometres,
+    # the raw reading of each motor, and the canvas, everywhere a picture can
+    # show, a little wider than the travel.
     x = status["position"]["x"]
-    assert set(x) == {"value", "actuator", "canvas"}
-    assert x["value"] == 0.0 and x["actuator"] == "motoric"
+    assert list(x) == ["position", "unit", "actuators", "canvas"]
+    assert x["position"] == 0.0 and x["unit"] == "micrometer"
+    assert list(x["actuators"]) == ["motoric"]
     assert x["canvas"][0] < -5000.0 and x["canvas"][1] > 5000.0
     assert status["state"]["changeable"]["exposure_ms"] == 10.0
     assert status["state"]["observed"]["objective"] == "10x/0.30 Air"
@@ -253,7 +255,8 @@ def test_a_move_with_another_motor(microscope):
     conversation, _ = talk(microscope, ("move_stage", call), "Moved with the piezo.")
     conversation.send("move the piezo up 50")
     assert position(microscope)["z"] == 50.0
-    assert tool_results(conversation)[0]["actuators"]["z"] == "piezo"
+    # The answer is read back from the microscope: the piezo carried the whole move.
+    assert tool_results(conversation)[0]["content"]["z"]["actuators"]["piezo"] == 50.0
 
 
 def test_limit_breach_is_refused_with_advice_and_shown_in_the_window(microscope):

@@ -245,7 +245,7 @@ def move_stage(
     for axis, value in target.items():
         if (outside := _outside(xyz[axis], axis, value)) is not None:
             return refusal(ctx, "limit", f"{outside} The stage did not move.", LIMIT_ADVICE)
-    here = {axis: xyz[axis]["value"] for axis in AXES}
+    here = {axis: xyz[axis]["position"] for axis in AXES}
     anchor = ctx.deps.anchor or here
     xy_step = max(abs(target.get(a, here[a]) - anchor[a]) for a in ("x", "y"))
     z_step = abs(target.get("z", here["z"]) - anchor["z"])
@@ -283,7 +283,12 @@ def _outside(reading: dict[str, Any], axis: str, value: float) -> str | None:
 
 
 def _move(ctx: RunContext[Microscope], position: dict[str, float], actuators) -> dict[str, Any]:
-    """set_xyz, and the position read back. What the driver refuses is a limit refusal."""
+    """set_xyz, and where the stage ended up. What the driver refuses is a limit refusal.
+
+    A successful set_xyz already answers with the position read back from the
+    microscope, in the same form as get_xyz, so no second reading is needed.
+    After a failed move the stage is read once more, to say where it stands.
+    """
     try:
         answer = ctx.deps.call(
             "set_xyz", position["x"], position["y"], position["z"], with_actuators=actuators
@@ -291,12 +296,12 @@ def _move(ctx: RunContext[Microscope], position: dict[str, float], actuators) ->
     except ValueError as exc:
         message = f"the driver refused the move: {exc}. The stage did not move."
         return refusal(ctx, "limit", message, LIMIT_ADVICE)
-    content = answer.get("content") or {}
-    return {
-        **answered(answer),
-        "position": ctx.deps.position(),
-        "actuators": content.get("actuators") if isinstance(content, dict) else None,
-    }
+    content = answer.get("content")
+    if answer.get("success") and isinstance(content, dict):
+        reached = {axis: content[axis]["position"] for axis in AXES}
+    else:
+        reached = ctx.deps.position()
+    return {**answered(answer), "position": reached}
 
 
 # -- settings, focus and routines -------------------------------------------------------------
