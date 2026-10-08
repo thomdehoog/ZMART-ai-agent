@@ -39,7 +39,7 @@ answers anyway:
 | It asks | And learns |
 |---|---|
 | `get_info` | the microscope described in plain words by its driver, and where images are saved |
-| `get_actuators`, `get_xyz` | the axes and their motors, and each axis's canvas: everywhere a picture can show along it, in micrometres, a little wider than the stage's travel |
+| `get_actuators`, `get_xyz` | the axes and their motors; for each axis its position in micrometres from the origin, the raw reading of every motor, and the canvas: everywhere a picture can show along it, a little wider than the stage's travel |
 | `get_state` | the settings that can be changed, by the driver's own names, and the read-only report (objective, pixel size, ...) |
 | `get_acquisition_settings` | the acquisition settings, the choices for acquiring (for example a z-stack, or a folder for the files), with their allowed values |
 | `get_procedures` | the routines the microscope offers, such as autofocus, each with a description |
@@ -149,7 +149,7 @@ minutes and tell me whether it drifts*
 |---|---|---|
 | `check_setup` | names the chosen driver and connects (again) to its microscope, with the steps for you when that fails | `set_instrument`, and the readings above |
 | `get_status` | reads the position and the state | `get_xyz`, `get_state` |
-| `move_stage` | moves to an absolute position, optionally with a named motor | `get_xyz`, `set_xyz` |
+| `move_stage` | moves to an absolute position, optionally with a named motor, and reports the position read back after the move | `get_xyz`, `set_xyz` |
 | `set_microscope` | changes settings, by the names the driver lists as changeable | `get_state`, `set_state` |
 | `focus` | runs the microscope's own focus routine (one whose name holds "focus"), at once | `get_procedures`, `run_procedure` |
 | `run_procedure` | runs any routine the microscope lists, after your go-ahead | `get_procedures`, `run_procedure` |
