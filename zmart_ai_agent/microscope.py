@@ -34,7 +34,7 @@ from typing import Any
 
 import numpy as np
 from zmart_controller.session import Session, set_instrument
-from zmart_controller.utils import driver_name
+from zmart_controller.registry import driver_name
 
 from .eyes import Eyes
 from .instructions import INSTRUMENT_SECTION, NO_DESCRIPTION, NOT_CONNECTED, UNANSWERED
@@ -159,7 +159,7 @@ class Microscope:
     def position(self) -> dict[str, float]:
         """Where the stage is: x, y and z in the driver's frame."""
         xyz = self.read("get_xyz")
-        return {axis: xyz[axis]["value"] for axis in ("x", "y", "z")}
+        return {axis: xyz[axis]["position"] for axis in ("x", "y", "z")}
 
     def where(self) -> dict[str, Any]:
         """The position and the settings: what a picture depends on."""
@@ -286,7 +286,9 @@ def _axes(xyz: dict[str, Any], actuators: dict[str, Any]) -> str:
     for axis, reading in xyz.items():
         low, high = reading.get("canvas") or (None, None)
         span = f"canvas {low:g} to {high:g} um" if None not in (low, high) else "canvas not given"
-        motors = ", ".join(str(m) for m in actuators.get(axis, [reading.get("actuator")]))
+        # The motors of the axis: as get_actuators lists them, or else the ones
+        # get_xyz reports a reading for.
+        motors = ", ".join(str(m) for m in actuators.get(axis) or reading.get("actuators") or [])
         lines.append(f"  {axis}: {span}; motors: {motors}")
     return "\n".join(lines)
 
