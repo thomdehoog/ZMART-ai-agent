@@ -1,13 +1,13 @@
 """The mock microscope the tests and the evaluation drive: a driver module of its own.
 
 The pretend microscope ships with the controller as ``zmart_controller.mock``.
-This module is a driver too: it holds one function per command, as every
-ZMART driver does, and each function hands the call on to the mock. It is
-plugged in exactly as a real driver is::
+This module is a driver too: it holds one function per command, as a module
+driver does, and each function hands the call on to the mock. It is plugged
+in exactly as a real driver is::
 
-    zmart_controller.set_instrument(mock_microscope, mock_connection(folder))
+    zmart_controller.ZmartController(mock_microscope, mock_connection(folder))
 
-Why not plug in ``zmart_controller.mock`` itself? The controller copies a
+Why not plug in ``zmart_controller.mock`` itself? The controller takes a
 driver's functions when it connects, so replacing one of the mock's
 functions afterwards would not reach a session that is already open. Here
 every call looks its function up in ``MOCK_OPS`` at the moment it is made,
@@ -27,11 +27,11 @@ from pathlib import Path
 from typing import Any
 
 import zmart_controller.mock
-from zmart_controller.utils import OPS
+from zmart_controller.zmart_controller import COMMANDS
 
-# The mock's own functions, one per command. A test replaces an entry here.
+# The mock's own functions, one per command, plus connect. A test replaces an entry here.
 MOCK_OPS: dict[str, Any] = {
-    name: getattr(zmart_controller.mock, name) for name in (*OPS, "disconnect")
+    name: getattr(zmart_controller.mock, name) for name in ("connect", *COMMANDS)
 }
 
 
@@ -46,7 +46,7 @@ def _hand_on(name: str):
 for _name in MOCK_OPS:
     globals()[_name] = _hand_on(_name)
 
-# This module, to pass to set_instrument or to Microscope as the driver.
+# This module, to pass to ZmartController or to Microscope as the driver.
 DRIVER = sys.modules[__name__]
 
 

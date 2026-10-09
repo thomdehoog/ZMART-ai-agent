@@ -1,20 +1,23 @@
 """A chat window for the microscope agent.
 
     zmart-ai-agent                                      # the simulated microscope
-    zmart-ai-agent --driver my_scope_driver             # a driver, by its import name
-    zmart-ai-agent --driver my_scope_driver --connection '{"host": "scope-1"}'
+    zmart-ai-agent --driver my-scope                    # an installed driver, by its name
+    zmart-ai-agent --driver my-scope --connection '{"password": "..."}'
 
 Works with any microscope that has a ZMART driver installed on this computer.
-A driver is a Python module with one function per command; it is named as
-Python imports it, and ``zmart_controller.mock``, the simulated microscope
-that comes with the controller, is used when none is named. At the top, the
-Driver box shows that name and connects to it; another name can be typed there.
-Below it, the Model panel chooses the model to talk to (a cloud model with its
-API key, a server you run yourself, or a model file on this computer). Left:
-the conversation and the buttons. Right: the latest image, the microscope
-status, and a red banner for anything refused. The divider between the two
-halves can be dragged. A clock in the window fires the schedules the
-agent sets ("look every three minutes") as turns of their own.
+A driver is installed once with the ZMART Controller
+(``zmart_controller.register_driver``), and the controller lists it by the
+name in its ``zmart_driver.json``; ``mock``, the simulated microscope that
+comes with the controller, is always listed and is used when none is named.
+At the top, the Driver box offers those names and connects to the chosen
+one. Below it, the Model panel chooses the model to talk to (a cloud model
+with its API key, a server you run yourself, or a model file on this
+computer). Left: the conversation, the open request and the schedules, and
+the buttons. Right: the latest image, the microscope status, and a red
+banner for anything refused. The divider between the two halves can be
+dragged. A clock in the window fires the schedules the agent sets ("look
+every three minutes") and continues a request whose wait is over, each as a
+turn of its own.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -31,6 +34,7 @@ import json
 import sys
 import threading
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -39,6 +43,7 @@ from PySide6.QtGui import QCloseEvent, QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -53,15 +58,24 @@ from PySide6.QtWidgets import (
 
 from . import models
 from .agent import Conversation
+from .bars import RequestBar, ScheduleRows
 from .images import as_png
-from .instructions import CHOOSE_STEPS, CONNECT_STEPS, SCHEDULED_TURN
+from .instructions import (
+    CHOOSE_STEPS,
+    CONNECT_STEPS,
+    CONTINUATION_SHOWN,
+    CONTINUATION_TURN,
+    SCHEDULED_SHOWN,
+    SCHEDULED_TURN,
+)
 from .local import CONTEXT_TOO_SMALL_HELP, CONTEXT_TOO_SMALL_SIGNS
-from .microscope import Microscope
+from .microscope import Microscope, instruments
 from .panel import ModelPanel, PreferencesBox
-from .settings import DEFAULT_PROVIDER, FONT_POINTS
+from .settings import DEFAULT_DRIVER, DEFAULT_PROVIDER, FONT_POINTS
 
-# The colour of each voice in the transcript.
-COLOURS = {"you": "#1a5fb4", "agent": "#26a269", "system": "#b00020", "scheduled": "#8a5a00"}
+# The colour of each voice in the transcript. A turn the machine wrote (a schedule
+# that fell due, a wait that is over) is a muted line, so it does not look typed.
+COLOURS = {"you": "#1a5fb4", "agent": "#26a269", "system": "#b00020", "machine": "#777"}
 
 WELCOME = (
     "Hello. I can move the stage, change the microscope's settings, focus, look at the "
@@ -72,8 +86,21 @@ WELCOME = (
 )
 
 
-# The driver used when none is named: the simulated microscope that comes with the controller.
-DEFAULT_DRIVER = "zmart_controller.mock"
+def choose_driver(name: str) -> Any:
+    """The driver the operator named: an installed driver's name as the controller
+    lists it, or else a Python module that is a driver (as the tests use).
+
+    Raises ``ValueError`` naming the installed drivers when neither fits.
+    """
+    name = name.strip()
+    if name in instruments():
+        return name
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        raise ValueError(
+            f"no driver is installed as {name!r}; installed: {', '.join(instruments())}"
+        ) from None
 
 
 class _Signals(QObject):
@@ -112,12 +139,14 @@ class AgentWindow(QMainWindow):
         microscope.on_warning = self.signals.warning.emit
         microscope.on_tool = self.signals.tool.emit
 
-        # top: which driver, by its import name; the connection entries are never
-        # shown, since they may hold a password
-        self.driver_box = QLineEdit(placeholderText=f"the driver, e.g. {DEFAULT_DRIVER}")
-        if microscope.driver is not None:
-            self.driver_box.setText(microscope.name)
-        self.driver_box.returnPressed.connect(self.connect_chosen)
+        # top: which driver, by the name the controller lists it under; the
+        # connection entries are never shown, since they may hold a password
+        self.driver_box = QComboBox()
+        self.driver_box.setEditable(True)
+        self.driver_box.addItems(instruments())
+        self.driver_box.setCurrentText(microscope.name if microscope.driver is not None else "")
+        self.driver_box.lineEdit().setPlaceholderText(f"the driver, e.g. {DEFAULT_DRIVER}")
+        self.driver_box.lineEdit().returnPressed.connect(self.connect_chosen)
         self.connect_button = QPushButton("Connect", clicked=self.connect_chosen)
         microscope_row = QHBoxLayout()
         microscope_row.addWidget(QLabel("Driver:"))
@@ -126,6 +155,8 @@ class AgentWindow(QMainWindow):
 
         # left: the conversation
         self.transcript = QTextBrowser()
+        self.request_bar = RequestBar(self.cancel_request)
+        self.schedule_rows = ScheduleRows(self.cancel_schedule)
         self.prompt = QLineEdit(placeholderText="Ask the microscope agent ...")
         self.prompt.returnPressed.connect(self.send)
         self.send_button = QPushButton("Send", clicked=self.send)
@@ -149,15 +180,18 @@ class AgentWindow(QMainWindow):
         self.panel = ModelPanel(
             self.use_model, lambda text: self._say("system", text), self.preferences
         )
-        # The window's clock: every second, a schedule that fell due runs as a turn.
+        # The window's clock: every second, the bars are refreshed, and a continuation
+        # or a schedule that fell due runs as a turn.
         self._tick = QTimer(self)
-        self._tick.timeout.connect(self.fire_due_schedule)
+        self._tick.timeout.connect(self.tick)
         self._tick.start(1000)
 
         left = QVBoxLayout()
         left.addLayout(microscope_row)
         left.addWidget(self.panel)
         left.addWidget(self.transcript, 1)
+        left.addWidget(self.request_bar)
+        left.addWidget(self.schedule_rows)
         left.addLayout(input_row)
         left.addLayout(buttons_row)
 
@@ -211,22 +245,23 @@ class AgentWindow(QMainWindow):
         Choosing another driver starts a new conversation: positions,
         settings and plans of one microscope mean nothing on another.
         """
-        name = self.driver_box.text().strip()
+        name = self.driver_box.currentText().strip()
         if self.busy or not name:
             return
         try:
-            chosen = importlib.import_module(name)
-        except Exception as exc:
-            self._say("system", f"Python could not load the driver {name!r}: {exc}")
+            chosen = choose_driver(name)
+        except ValueError as exc:
+            self._say("system", str(exc))
             self._say_steps(CHOOSE_STEPS)
             return
         microscope = self.conversation.microscope
-        if microscope.driver is not None and microscope.driver is not chosen:
+        if microscope.driver is not None and microscope.driver != chosen:
             self.conversation.clear()
             self._say("system", "Another microscope: the conversation starts afresh.")
         microscope.driver = chosen
         self._connect()
         self._refresh_status()
+        self.refresh_bars()
 
     def _connect(self) -> None:
         microscope = self.conversation.microscope
@@ -269,13 +304,11 @@ class AgentWindow(QMainWindow):
         """The panel's choice: talk to this model from the next message on.
 
         The chat is kept. The eyes start afresh when their model changes, since
-        another model cannot read the images and answers of the old one.
+        another model cannot read the looks of the old one.
         """
         seen = self.conversation.microscope.eyes.frames
         self.conversation.use(endpoint, vision)
-        note = (
-            f" The eyes start afresh; the {seen} images seen so far are forgotten." if seen else ""
-        )
+        note = f" The eyes start afresh; their {seen} looks so far are forgotten." if seen else ""
         self._say("system", f"Talking to {endpoint.name}.{note}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -303,20 +336,42 @@ class AgentWindow(QMainWindow):
         self._say("you", text)
         self._in_background(lambda: self.conversation.send(text))
 
-    def fire_due_schedule(self) -> None:
-        """The window's clock calls this every second. When no turn is running and a
-        schedule is due, its instruction runs as a turn of its own, marked as
-        scheduled in the transcript; while a turn runs it waits for the next tick.
+    def tick(self) -> None:
+        """The window's clock calls this every second: the bars are refreshed, and when
+        no turn is running, a continuation whose wait is over, else a schedule that
+        is due, runs as a turn of its own, shown as a muted line in the transcript.
+        While a turn runs they wait for the next tick.
         """
+        self.refresh_bars()
         if self.busy:
             return
-        item = self.conversation.microscope.scheduler.pop_due()
+        microscope = self.conversation.microscope
+        if (due := microscope.requests.due()) is not None:
+            request, result = due
+            self._say("machine", CONTINUATION_SHOWN.format(number=request.number, result=result))
+            text = CONTINUATION_TURN.format(number=request.number, result=result)
+            self._in_background(
+                lambda: self.conversation.send(text, "continuation", request.number)
+            )
+            return
+        item = microscope.scheduler.pop_due()
         if item is None:
             return
+        shown = SCHEDULED_SHOWN.format(
+            name=item["name"].replace("_", " "), instruction=item["instruction"]
+        )
         text = SCHEDULED_TURN.format(name=item["name"], instruction=item["instruction"])
         self.warning.hide()
-        self._say("scheduled", text)
-        self._in_background(lambda: self.conversation.send(text, scheduled=True), item["name"])
+        self._say("machine", shown)
+        self._in_background(
+            lambda: self.conversation.send(text, "scheduled", item.get("request")), item["name"]
+        )
+
+    def refresh_bars(self) -> None:
+        """The request bar and the schedule rows, as things stand now."""
+        microscope = self.conversation.microscope
+        self.request_bar.show_request(microscope.requests.open())
+        self.schedule_rows.show_schedules(microscope.scheduler.listing(), self.busy)
 
     @property
     def busy(self) -> bool:
@@ -351,7 +406,7 @@ class AgentWindow(QMainWindow):
         self._say("system", text)
         self._set_busy(False)
 
-    # -- the operator's say: Cancel prompt, Stop, Clear ---------------------------------
+    # -- the operator's say: Cancel prompt, Cancel request, Cancel schedule, Stop, Clear ------
 
     def cancel_prompt(self) -> None:
         """Stop the agent, not the microscope: further tool calls in this turn do nothing.
@@ -364,9 +419,24 @@ class AgentWindow(QMainWindow):
         self.conversation.microscope.cancel.set()
         self._say("system", "Cancelled. The agent stops after its current step.")
 
+    def cancel_request(self) -> None:
+        """End the open request, with any wait it had pending; a turn of it that is
+        running is cancelled as Cancel prompt does. The microscope is not stopped."""
+        self.cancel_prompt()
+        self.conversation.microscope.requests.end("cancelled by the operator")
+        self._say("system", "The request is cancelled; nothing of it continues.")
+        self.refresh_bars()
+
+    def cancel_schedule(self, name: str) -> None:
+        """A schedule row's Cancel: that schedule only; a turn it already started runs on.
+        The agent sees it gone in the next state reading."""
+        if self.conversation.microscope.scheduler.cancel(name):
+            self._say("system", f"The schedule '{name}' is cancelled.")
+        self.refresh_bars()
+
     def stop_microscope(self) -> None:
         """Cancel the agent, end a running acquisition after the current image, and
-        drop every schedule."""
+        drop every schedule and the open request."""
         self.conversation.microscope.stop()
         self._say(
             "system",
@@ -374,6 +444,7 @@ class AgentWindow(QMainWindow):
             "current image, and every schedule is cancelled. A single move or image "
             "already under way finishes; use the microscope's own controls to stop it sooner.",
         )
+        self.refresh_bars()
 
     def clear_context(self) -> None:
         """Forget the conversation, in the window and in the agent's memory."""
@@ -382,6 +453,7 @@ class AgentWindow(QMainWindow):
         self.conversation.clear()
         self.transcript.clear()
         self._say("agent", WELCOME, escape=False)
+        self.refresh_bars()
 
     # -- the right-hand side ----------------------------------------------------------
 
@@ -414,14 +486,14 @@ class AgentWindow(QMainWindow):
             self.status.setText(f"{microscope.name}: not connected")
             return
         try:
-            state = microscope.state()
+            where = microscope.where()
         except Exception as exc:
             self.status.setText(f"{microscope.name}: not answering ({exc})")
             return
-        p = state["position_um"]
+        p = where["position_um"]
         settings = ", ".join(
             f"{name} {value:g}" if isinstance(value, float) else f"{name} {value}"
-            for name, value in (state.get("settings") or {}).items()
+            for name, value in (where.get("settings") or {}).items()
         )
         self.status.setText(
             f"{microscope.name}  ·  x {p['x']:.1f}, y {p['y']:.1f}, z {p['z']:.1f} um  ·  "
@@ -433,6 +505,9 @@ class AgentWindow(QMainWindow):
     def _say(self, who: str, text: str, escape: bool = True) -> None:
         colour = COLOURS[who]
         body = html.escape(text).replace("\n", "<br>") if escape else text
+        if who == "machine":  # nobody typed it: a muted line where the voice would be
+            self.transcript.append(f'<p style="color:{colour}"><i>{body}</i></p>')
+            return
         self.transcript.append(f'<p><b style="color:{colour}">{who}</b><br>{body}</p>')
 
     def _set_busy(self, busy: bool) -> None:
@@ -442,6 +517,7 @@ class AgentWindow(QMainWindow):
         self.connect_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.send_button.setText("Working ..." if busy else "Send")
+        self.refresh_bars()
 
 
 def _explain(exc: Exception, endpoint: models.Endpoint | None) -> str:
@@ -466,15 +542,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--driver",
         default=DEFAULT_DRIVER,
-        help="the microscope's ZMART driver, by the name Python imports it as; without it, "
-        f"{DEFAULT_DRIVER}, the simulated microscope",
+        help="the microscope's ZMART driver, by the name the controller lists it under "
+        f"(zmart_controller.get_instruments); without it, {DEFAULT_DRIVER}, the simulated "
+        "microscope",
     )
     parser.add_argument(
         "--connection",
         type=json.loads,
         default=None,
-        help='what the driver needs to connect, as JSON, e.g. \'{"host": "scope-1"}\'; '
-        "the driver's README says which entries it takes",
+        help="what the driver needs to connect beyond what was saved with it, as JSON, e.g. "
+        '\'{"password": "..."}\'; the driver\'s README says which entries it takes',
     )
     parser.add_argument(
         "--model",
@@ -489,9 +566,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        driver = importlib.import_module(args.driver)
-    except ImportError as exc:
-        print(f"Python could not load the driver {args.driver!r}: {exc}", file=sys.stderr)
+        driver = choose_driver(args.driver)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
         return 2
 
     app = QApplication(sys.argv[:1])

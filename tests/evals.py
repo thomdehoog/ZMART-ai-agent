@@ -116,11 +116,13 @@ READING_TOOLS = {
     "plan_acquisition",
     "schedule",
     "cancel_schedule",
+    "wait",
     "search_source",
     "read_source",
 }  # they change nothing at the microscope
 TOOLS = READING_TOOLS | {
-    "move_stage", "set_microscope", "focus", "run_procedure", "look", "run_acquisition",
+    "move_stage", "set_microscope", "focus", "run_procedure", "look", "calibrate",
+    "run_acquisition",
 }  # fmt: skip
 EXPECTATIONS = {
     "calls", "calls_any", "not_calls", "max_calls", "min_calls", "max_tool_calls", "args",

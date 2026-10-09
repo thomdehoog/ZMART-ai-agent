@@ -9,12 +9,19 @@ typed, one at a time and never while a turn is running. The model cannot keep
 time; this does, and the microscope state carries the clock and the schedules
 so the model knows both.
 
+The scheduler's clock is the agent's one clock. Every time the agent writes
+about the microscope, a frame, a schedule or a request comes from it, so a
+test (or a simulator) that hands it a clock of its own decides when time
+passes. ``hms`` writes such a time the way the operator reads it.
+
 Two threads use it at once: the agent's tools add and cancel schedules,
 and the window's clock pops the due one. A lock makes every change whole, so
 neither thread ever sees a half-changed list.
 
 A scheduled turn is not the operator's: a scheduled acquisition or long stage
 move still asks for their go-ahead in the chat, and waits until they answer.
+Each schedule remembers the request that set it (see ``requests.py``), so its
+firings count as turns of that request.
 
 Author: Thom de Hoog, Center for Microscopy and Image Analysis (ZMB), University of Zurich
         thom.dehoog@zmb.uzh.ch . thomdehoog@gmail.com
@@ -33,9 +40,15 @@ from typing import Any
 from .settings import CLOCK_FORMAT, SCHEDULE_MIN_SECONDS, SCHEDULES_MAX
 
 
+def hms(seconds: float) -> str:
+    """A moment on the agent's clock (seconds since the epoch) as a time of day, HH:MM:SS."""
+    return time.strftime(CLOCK_FORMAT, time.localtime(seconds))
+
+
 class Scheduler:
     """Named schedules: repeating every so many seconds, once after a delay, or
-    once at a clock time. ``clock`` is replaceable for the tests."""
+    once at a clock time. ``clock`` is replaceable for the tests, and is the
+    agent's one clock."""
 
     def __init__(self, clock: Callable[[], float] = time.time) -> None:
         self.clock = clock
@@ -49,11 +62,14 @@ class Scheduler:
         every_seconds: float | None = None,
         in_seconds: float | None = None,
         at: str | None = None,
+        request: int | None = None,
     ) -> dict[str, Any]:
         """Add or replace the schedule ``name``; returns it as the listing shows it.
 
         Exactly one of ``every_seconds``, ``in_seconds`` and ``at`` must be given.
-        A ValueError says what is wrong with the request.
+        ``request`` is the number of the request that set it, so that its
+        firings belong to that request. A ValueError says what is wrong with
+        the request.
         """
         name, instruction = (name or "").strip(), (instruction or "").strip()
         if not name or not instruction:
@@ -73,7 +89,7 @@ class Scheduler:
             raise ValueError("give exactly one of every_seconds, in_seconds or at")
         key, value = given[0]
         now = self.clock()
-        item: dict[str, Any] = {"name": name, "instruction": instruction}
+        item: dict[str, Any] = {"name": name, "instruction": instruction, "request": request}
         if key == "at":
             item["at"] = _clock_time(value)
             item["next"] = _next_occurrence(item["at"], now)
@@ -109,7 +125,8 @@ class Scheduler:
 
         A repeating schedule is set for its next time, counted from now, so a
         period is really the period plus the turn it fires. A one-off is
-        removed. One at a time, so the window runs one turn per tick.
+        removed. One at a time, so the window runs one turn per tick. The
+        schedule comes back with its ``request``, the request that set it.
         """
         now = self.clock()
         with self._lock:
@@ -138,7 +155,7 @@ class Scheduler:
         keys = ("name", "instruction", "every_seconds", "in_seconds", "at")
         listed = {key: item[key] for key in keys if key in item}
         listed["due_in_s"] = int(max(0.0, item["next"] - now))
-        listed["due_at"] = time.strftime(CLOCK_FORMAT, time.localtime(item["next"]))
+        listed["due_at"] = hms(item["next"])
         return listed
 
 

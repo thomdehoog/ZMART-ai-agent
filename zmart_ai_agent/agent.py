@@ -8,7 +8,7 @@ driver's answers; the memory (``memory.py``) keeps a long conversation small;
 the models (``models.py``) are the ways to reach a model. ``Conversation`` is one
 conversation: a message in, the answer out.
 
-    microscope = Microscope(zmart_controller.mock)
+    microscope = Microscope("mock")
     conversation = Conversation(microscope)
     print(conversation.send("Take a picture here and tell me what you see"))
 
@@ -31,6 +31,7 @@ from .instructions import INSTRUCTIONS
 from .memory import compact, without_a_declined_challenge, without_state_block
 from .microscope import Microscope
 from .settings import DEFAULT_MODEL_SETTINGS, MODEL, TOOL_CALL_RETRIES
+from .tooling import flat_view
 from .tools import REPLY_GUARDS, TOOLS
 
 agent = Agent(
@@ -68,36 +69,44 @@ class Conversation:
         self.history: list[ModelMessage] = []
         self.last_turn: list[ModelMessage] = []  # the latest turn's messages, for traces
 
-    def send(self, text: str, scheduled: bool = False) -> str:
+    def send(self, text: str, origin: str = "operator", request: int | None = None) -> str:
         """One message in, the agent's answer out.
 
-        A message the operator typed starts a new turn of theirs: moves are
-        measured from where the stage is now, and a question the agent
-        asked in the turn before counts as answered by this message. A
-        ``scheduled`` message (the window sends one when a schedule falls due)
-        does neither, so a repeating schedule cannot creep the stage along in
-        small steps, and cannot stand in for the operator's go-ahead.
+        A message the operator typed (``origin`` "operator") starts a new
+        request and a new turn of theirs: moves are measured from where the
+        stage is now, and a question the agent asked in the turn before counts
+        as answered by this message. A turn the machine wrote, a schedule that
+        fell due ("scheduled") or a wait that is over ("continuation"), belongs
+        to the request numbered ``request`` and does neither, so a repeating
+        schedule cannot creep the stage along in small steps, and cannot stand
+        in for the operator's go-ahead.
         """
-        self.microscope.cancel.clear()
+        microscope = self.microscope
+        microscope.cancel.clear()
+        if origin == "operator":
+            microscope.requests.typed(text)
+        else:
+            microscope.requests.machine(request)
         try:
-            self.microscope.ensure_connected()  # the first message, or after a failed connect
-            state = self.microscope.state()
-            if not scheduled:
-                self.microscope.anchor = state["position_um"]
+            microscope.ensure_connected()  # the first message, or after a failed connect
+            state = microscope.state(origin)
+            if origin == "operator":
+                microscope.anchor = state["position_um"]
+            microscope.seen = flat_view(state)
         except Exception as exc:
             # No microscope chosen, or it does not answer: the model still gets the
             # message, so it can call check_setup and tell the operator what to do.
             state = {"microscope": f"not connected: {exc}"}
-            self.microscope.anchor = None
-        if not scheduled:
-            self.microscope.turn += 1
+            microscope.anchor, microscope.seen = None, None
+        if origin == "operator":
+            microscope.turn += 1
         prompt = f"{text}\n\n<microscope_state>{json.dumps(state, default=str)}</microscope_state>"
         with capture_run_messages() as messages:
             try:
                 result = agent.run_sync(
                     prompt,
                     message_history=self.history,
-                    deps=self.microscope,
+                    deps=microscope,
                     model=self.model,
                     model_settings=self.model_settings,
                 )
@@ -111,7 +120,9 @@ class Conversation:
                 raise
         self.last_turn = without_a_declined_challenge(result.new_messages())
         self.history = compact(without_a_declined_challenge(result.all_messages()))
-        return without_state_block(result.output)
+        reply = without_state_block(result.output)
+        microscope.requests.finish_turn(reply, tokens_of(result.usage))
+        return reply
 
     def use(self, endpoint: models.Endpoint, vision: models.Endpoint | None = None) -> None:
         """Talk to another model from the next message on; the conversation is kept.
@@ -128,11 +139,17 @@ class Conversation:
     def clear(self) -> None:
         """Forget the conversation; the next message starts a new one.
 
-        The eyes forget their images and the schedules are cancelled.
+        The eyes forget their looks, the frames go, and the schedules and the
+        open request are cancelled.
         """
         self.history, self.last_turn = [], []
-        self.microscope.plans.clear()
-        self.microscope.planned_in.clear()
-        self.microscope.go_ahead_asked.clear()
-        self.microscope.scheduler.clear()
-        self.microscope.eyes.reset()
+        self.microscope.forget()
+
+
+def tokens_of(usage: Any) -> int:
+    """The tokens a turn took, in and out, as the provider counted them."""
+    if callable(usage):  # a method in some versions of Pydantic AI, a value in others
+        usage = usage()
+    return int(getattr(usage, "input_tokens", 0) or 0) + int(
+        getattr(usage, "output_tokens", 0) or 0
+    )

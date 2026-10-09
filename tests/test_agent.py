@@ -72,19 +72,6 @@ class Script:
         return FunctionModel(self)
 
 
-@pytest.fixture
-def microscope(connection):
-    scope = Microscope(DRIVER, connection)
-    scope.connect()
-    scope.vision = False  # no vision model in most tests; those with one say so
-    scope.images, scope.warnings, scope.tools = [], [], []
-    scope.on_image = lambda image, caption: scope.images.append((image, caption))
-    scope.on_warning = scope.warnings.append
-    scope.on_tool = lambda name, args: scope.tools.append((name, args))
-    yield scope
-    scope.disconnect()
-
-
 def talk(microscope, *steps):
     script = Script(*steps)
     return Conversation(microscope, model=script.model()), script
@@ -478,10 +465,12 @@ def test_look_acquires_reads_the_file_and_asks_a_vision_model(microscope):
     assert Path(saved).is_file() and Path(saved).name.startswith(f"{LOOK_LABEL}_")
     image, caption = microscope.images[0]
     assert image.shape == (64, 64) and caption == "what do you see?"
-    # the vision model got the question, the measurements and a PNG
-    question, png = vision.requests[0][-1].parts[-1].content
-    assert "what do you see?" in question and "sharpness" in question
-    assert png.media_type == "image/png"
+    # the frame was kept, with where its signal sits and the move that would centre it
+    assert result["frame"]["n"] == 1 and "centre_move_um" in result["frame"]
+    # the vision model got the frame's words, its PNG, and the question
+    parts = vision.requests[0][-1].parts[-1].content
+    assert parts[1].startswith("Frame 1,") and "sharpness" in parts[1]
+    assert parts[2].media_type == "image/png" and "what do you see?" in parts[-1]
 
 
 def test_the_eyes_remember_earlier_images(microscope):
@@ -492,18 +481,18 @@ def test_the_eyes_remember_earlier_images(microscope):
     conversation, _ = talk(microscope, look, again, "Nothing moved.")
     conversation.send("look twice and compare")
     first, second = tool_results(conversation)
-    assert first["images_seen"] == 1 and second["images_seen"] == 2
+    assert first["looks"] == 1 and second["looks"] == 2
     assert second["answer"].startswith("The same three spots")
     history = vision.requests[1]
     texts = [
         p.content for m in history for p in m.parts if isinstance(p, (UserPromptPart, TextPart))
     ]
     assert any(t == "Three spots." for t in texts)
-    prompt = history[-1].parts[-1].content[0]
-    assert prompt.startswith("Image 2,") and "position_um" in prompt and "laser_power" in prompt
+    prompt = history[-1].parts[-1].content[1]
+    assert prompt.startswith("Frame 2,") and "position_um" in prompt and "laser_power" in prompt
 
 
-def test_ask_eyes_asks_about_the_images_seen_without_a_new_one(microscope):
+def test_ask_eyes_asks_about_the_frames_seen_without_a_new_one(microscope):
     vision = Script("Three spots.", "Still three; nothing has moved.")
     microscope.vision_model, microscope.vision = vision.model(), True
     steps = [
@@ -514,7 +503,7 @@ def test_ask_eyes_asks_about_the_images_seen_without_a_new_one(microscope):
     conversation, _ = talk(microscope, *steps)
     conversation.send("look, then tell me whether it moved")
     asked = tool_results(conversation)[1]
-    assert asked["answer"] == "Still three; nothing has moved." and asked["images_seen"] == 1
+    assert asked["answer"] == "Still three; nothing has moved." and asked["looks"] == 1
     assert len(microscope.images) == 1  # no new image for the question
     assert vision.requests[1][-1].parts[-1].content.startswith("No new image.")
 
@@ -527,19 +516,26 @@ def test_ask_eyes_before_any_look_says_so(microscope):
     assert "look first" in tool_results(conversation)[0]["answer"] and vision.requests == []
 
 
-def test_older_images_are_detached_but_their_words_stay(microscope):
+def test_a_look_keeps_its_words_and_loses_its_pictures_once_answered(microscope):
     vision = Script("One.", "Two.", "Three.")
     microscope.vision_model, microscope.vision = vision.model(), True
-    microscope.eyes = Eyes(vision.model(), frames_kept=1)
     look = ("look", {"question": "what?"})
-    conversation, _ = talk(microscope, look, look, look, "Done.")
+    again = ("look", {"question": "and now?", "frames": "1,2"})  # shown again from the history
+    conversation, _ = talk(microscope, look, look, again, "Done.")
     conversation.send("look three times")
     turns = [m for m in microscope.eyes._history if isinstance(m.parts[0], UserPromptPart)]
     assert len(turns) == 3
     with_image = [any(isinstance(c, BinaryContent) for c in t.parts[0].content) for t in turns]
-    assert with_image == [False, False, True]  # only the newest keeps its picture
-    assert "[image no longer attached]" in turns[0].parts[0].content
-    assert "Image 1," in turns[0].parts[0].content[0]  # the words stay
+    assert with_image == [False, False, False]  # answered: the pictures are gone
+    assert "[pictures no longer attached]" in turns[0].parts[0].content
+    assert "Frame 1," in turns[0].parts[0].content[1]  # the words stay
+    # the third look showed frames 1 and 2 again, with the new one, and measured the changes
+    sent = vision.requests[2][-1].parts[-1].content
+    assert sum(isinstance(c, BinaryContent) for c in sent) == 3
+    result = tool_results(conversation)[2]
+    assert [f["n"] for f in result["frames"]] == [1, 2, 3]
+    assert [c["n"] for c in result["changes"]] == [2, 3]
+    assert "image_shift_um" in result["changes"][1]["since_first"]
 
 
 def test_the_eyes_keep_only_the_last_so_many_looks(microscope):
@@ -550,7 +546,7 @@ def test_the_eyes_keep_only_the_last_so_many_looks(microscope):
     conversation, _ = talk(microscope, look, look, look, "Done.")
     conversation.send("look three times")
     turns = [m for m in microscope.eyes._history if isinstance(m.parts[0], UserPromptPart)]
-    assert len(turns) == 2 and "Image 2," in turns[0].parts[0].content[0]
+    assert len(turns) == 2 and "Frame 2," in turns[0].parts[0].content[1]
     assert last_turns([], 3) == []
 
 
@@ -704,9 +700,9 @@ def test_a_scheduled_turn_is_not_the_operators(microscope):
     conversation.send("move x to 600")
     step = ("move_stage", {"x": 1200})
     conversation, _ = talk(microscope, step, "Shall I?", step, "Shall I?")
-    conversation.send("[scheduled 'creep'] move x 600 further", scheduled=True)
+    conversation.send("[scheduled 'creep'] move x 600 further", "scheduled", 1)
     assert tool_results(conversation)[-1]["status"] == "needs_go_ahead"
-    conversation.send("[scheduled 'creep'] move x 600 further", scheduled=True)
+    conversation.send("[scheduled 'creep'] move x 600 further", "scheduled", 1)
     assert tool_results(conversation)[-1]["status"] == "needs_go_ahead"
     assert position(microscope)["x"] == 600.0
     assert microscope.turn == 1  # scheduled turns do not count as the operator's
@@ -977,14 +973,19 @@ def test_a_malformed_plan_goes_back_to_the_model(microscope):
 def test_the_source_of_the_agent_the_controller_and_the_driver_can_be_read(microscope):
     steps = [
         ("search_source", {"text": "def set_xyz"}),
-        ("read_source", {"file": "zmart_controller/session.py", "start_line": 1, "lines": 3}),
+        (
+            "read_source",
+            {"file": "zmart_controller/zmart_controller.py", "start_line": 1, "lines": 3},
+        ),
         "Here is how it works.",
     ]
     conversation, _ = talk(microscope, *steps)
     conversation.send("how does a move reach the microscope?")
     found, read = tool_results(conversation)
-    assert any(m.startswith("zmart_controller/session.py:") for m in found["matches"])
-    assert any(m.startswith("zmart_controller/mock/driver.py:") for m in found["matches"])
+    assert any(m.startswith("zmart_controller/zmart_controller.py:") for m in found["matches"])
+    assert any(
+        m.startswith("zmart_controller/mock/zmart_controller_plugin.py:") for m in found["matches"]
+    )
     assert read["lines"].startswith("1 to 3 of") and read["text"].startswith("1: ")
 
 
@@ -992,7 +993,9 @@ def test_nothing_outside_those_sources_can_be_read(microscope):
     conversation, _ = talk(microscope, ("read_source", {"file": "../../etc/passwd"}), "No.")
     conversation.send("read that file")
     error = tool_results(conversation)[0]["error"]
-    assert error["code"] == "not_found" and "zmart_ai_agent/tools.py" in error["configured_options"]
+    assert (
+        error["code"] == "not_found" and "zmart_ai_agent/moving.py" in error["configured_options"]
+    )
     parts = ("zmart_ai_agent/", "zmart_controller/")
     assert all(f.startswith(parts) for f in error["configured_options"])
     assert microscope.warnings == []  # not a fault at the microscope: no red banner

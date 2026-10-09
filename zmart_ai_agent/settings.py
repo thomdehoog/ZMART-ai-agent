@@ -72,6 +72,11 @@ FLASH_ATTENTION = True  # smaller memory and faster attention where the build su
 SERVER_POLL_MS = 500  # how often the window asks whether the server is up
 SERVER_START_TIMEOUT_S = 300  # a large file can take minutes to load from a slow disk
 
+# -- the microscope --------------------------------------------------------------------
+# The driver used when none is named: the simulated microscope that comes with the
+# controller, which the controller's list of drivers always offers under this name.
+DEFAULT_DRIVER = "mock"
+
 # -- the tools -------------------------------------------------------------------------
 # A stage move that travels further than this from where the stage was when the
 # operator last wrote (on any one axis, in um) needs their go-ahead in the chat.
@@ -98,22 +103,56 @@ LOOK_MAX_SIDE = 1024  # a still larger image is binned further until it fits
 SOURCE_MATCHES = 40  # search results returned at most
 SOURCE_LINES = 200  # lines read at most in one go
 
+# -- the frames (frames.py) --------------------------------------------------------------
+# Every image a look or a run delivers is kept for the session as a small copy, its
+# longer side at most FRAME_COPY_SIDE pixels, with its number, time, position, settings
+# and the measured numbers. The oldest copies go once they take more than
+# FRAME_HISTORY_BYTES together (about a hundred 256-pixel copies); the numbers keep
+# counting. A look shows the eyes at most LOOK_FRAMES_MAX frames at once.
+FRAME_COPY_SIDE = 256
+FRAME_HISTORY_BYTES = 100 * 256 * 256 * 4
+LOOK_FRAMES_MAX = 16
+# The map, derived from the frames: a frame whose brightest pixel is less than
+# MAP_SIGNAL_MIN of the camera's full range above the background shows no signal, and
+# one with more than MAP_SATURATED_MAX percent of its pixels saturated is left out too.
+# Frames within MAP_SAME_PLACE_UM of one another in x and y share a focus curve; where
+# the sample sits is the median over the last MAP_PLACE_FRAMES usable frames.
+MAP_SIGNAL_MIN = 0.003
+MAP_SATURATED_MAX = 1.0
+MAP_SAME_PLACE_UM = 25.0
+MAP_PLACE_FRAMES = 5
+# calibrate measures how the image moves when the stage moves (frames.Calibration) and
+# keeps the answer per microscope and objective in this file under the computer's ZMART
+# configuration folder. Its test move is CALIBRATE_STEP_FRACTION of the field of view
+# (CALIBRATE_STEP_UM when the driver does not report its pixel size); a picture shift
+# measured with less than CALIBRATE_CONFIDENCE_MIN confidence is no measurement.
+CALIBRATION_FILE = ("zmart-ai-agent", "calibration.json")
+CALIBRATE_STEP_FRACTION = 0.1
+CALIBRATE_STEP_UM = 20.0
+CALIBRATE_CONFIDENCE_MIN = 0.05
+
 # -- the eyes ----------------------------------------------------------------------------
-# The vision model keeps a conversation of its own for the session, with every image a
-# look took, so it can compare the current image with earlier ones. The newest images
-# stay attached; older turns keep their text (time, settings, numbers, and what the eyes
-# said) and lose the picture, which keeps the cost of a look about one image.
-VISION_FRAMES_KEPT = 8
-# The eyes' conversation is also cut to this many looks, oldest first, so a look every
-# few minutes for a whole day does not send the whole day with every question.
+# The vision model keeps a conversation of its own for the session. A look attaches the
+# frames it asks about; once answered, a turn keeps its words (the frames' numbers,
+# measures, and what the eyes said) and loses the pictures, so a look costs the frames
+# it shows and no more. The conversation is also cut to this many looks, oldest first,
+# so a look every few minutes for a whole day does not send the whole day with every
+# question.
 VISION_TURNS_KEPT = 40
 
-# -- schedules ---------------------------------------------------------------------------
+# -- schedules and requests --------------------------------------------------------------
 # "Look every three minutes", "in ten minutes start the plan": the agent sets a
 # schedule and the window's clock fires each due instruction as a turn of its own.
 SCHEDULE_MIN_SECONDS = 5  # no schedule fires more often than this
 SCHEDULES_MAX = 10
 CLOCK_FORMAT = "%H:%M:%S"  # how the state, the eyes and the schedules write a time of day
+# A request (requests.py) is what one typed message set going. Its "wait" leaves one
+# continuation pending, for at most WAIT_MAX_S, and a request continues at most
+# CONTINUATIONS_MAX times. A checklist in a reply is the request's plan, of at most
+# PLAN_STEPS_MAX steps.
+WAIT_MAX_S = 4 * 3600
+CONTINUATIONS_MAX = 30
+PLAN_STEPS_MAX = 12
 
 # The conversation is made smaller now and then, between turns (see memory.compact()).
 HISTORY_COMPACT_AFTER = 15  # operator turns before the history is made smaller

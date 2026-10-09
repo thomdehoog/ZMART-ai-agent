@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("pytestqt")
 
 from mock_microscope import DRIVER
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QPushButton
 from test_agent import MOCK_OPS, Script, position, saved_images
 
 from zmart_ai_agent import window as window_module
@@ -90,7 +90,7 @@ def test_the_window_says_which_microscope_and_where_images_go(qtbot, open_window
     assert "Connected to mock_microscope" in transcript
     output_root = window.conversation.microscope.learned["info"]["output_root"]
     assert output_root in transcript and NO_DESCRIPTION not in transcript
-    assert window.driver_box.text() == "mock_microscope"
+    assert window.driver_box.currentText() == "mock_microscope"
 
 
 def test_a_driver_without_a_description_is_said_in_the_window(qtbot, open_window, monkeypatch):
@@ -110,10 +110,11 @@ def test_choosing_and_connecting_a_microscope(qtbot, open_window):
     window = open_window("Connected now.", connect=False, driver=None)
     transcript = window.transcript.toPlainText()
     assert "Driver box" in transcript and "not connected" in window.status.text()
-    window.driver_box.setText("no_such_driver")
+    window.driver_box.setCurrentText("no_such_driver")
     window.connect_button.click()
-    assert "could not load the driver 'no_such_driver'" in window.transcript.toPlainText()
-    window.driver_box.setText("mock_microscope")
+    assert "no driver is installed as 'no_such_driver'" in window.transcript.toPlainText()
+    assert "installed: mock" in window.transcript.toPlainText()
+    window.driver_box.setCurrentText("mock_microscope")
     window.connect_button.click()
     assert window.conversation.microscope.session is not None
     assert "Connected to mock_microscope" in window.transcript.toPlainText()
@@ -236,10 +237,10 @@ def test_a_due_schedule_waits_for_a_running_turn(qtbot, open_window, monkeypatch
     scheduler.clock = lambda: time.time() + 61
     start(window, "status")  # a turn is running; the due schedule must wait
     qtbot.wait(1200)
-    assert "[scheduled" not in window.transcript.toPlainText() and window.busy
+    assert "Scheduled:" not in window.transcript.toPlainText() and window.busy
     qtbot.waitUntil(lambda: "Fired." in window.transcript.toPlainText(), timeout=20000)
     transcript = window.transcript.toPlainText()
-    assert transcript.index("Slow status.") < transcript.index("[scheduled")
+    assert transcript.index("Slow status.") < transcript.index("Scheduled:")
 
 
 def test_a_failing_scheduled_turn_cancels_its_schedule(qtbot, open_window):
@@ -259,7 +260,7 @@ def test_a_due_schedule_runs_as_its_own_turn_and_stop_drops_it(qtbot, open_windo
     assert [s["name"] for s in scheduler.listing()] == ["watch"]
     scheduler.clock = lambda: time.time() + 61  # a minute passes
     qtbot.waitUntil(
-        lambda: "[scheduled 'watch'] status" in window.transcript.toPlainText(), timeout=5000
+        lambda: "Scheduled: watch · status" in window.transcript.toPlainText(), timeout=5000
     )
     qtbot.waitUntil(lambda: not window.busy, timeout=10000)
     assert "Here is the status." in window.transcript.toPlainText()
@@ -337,10 +338,54 @@ def test_main_plugs_in_the_driver_it_is_given(monkeypatch):
     monkeypatch.setattr(window_module, "QApplication", FakeApp)
     monkeypatch.setattr(window_module, "AgentWindow", FakeWindow)
     assert window_module.main([]) == 0  # no driver named: the simulated microscope
-    assert opened["microscope"].name == "zmart_controller.mock"
+    assert opened["microscope"].name == "mock" and opened["microscope"].driver == "mock"
     assert opened["microscope"].connection is None
     argv = ["--driver", "mock_microscope", "--connection", '{"mock_timing": "instant"}']
     assert window_module.main(argv) == 0
     assert opened["microscope"].driver is DRIVER
     assert opened["microscope"].connection == {"mock_timing": "instant"}
     assert window_module.main(["--driver", "no_such_driver"]) == 2
+
+
+def test_the_schedule_rows_count_down_and_cancel(qtbot, open_window):
+    window = open_window()
+    assert window.schedule_rows.isHidden()
+    scheduler = window.conversation.microscope.scheduler
+    now = time.time()
+    scheduler.clock = lambda: now  # a clock that stands still, so the countdown is exact
+    scheduler.add("watch_sample", "look", every_seconds=180)
+    scheduler.add("later", "switch the light off", in_seconds=45)
+    window.refresh_bars()
+    rows = window.schedule_rows.rows
+    assert list(rows) == ["later", "watch_sample"] and not window.schedule_rows.isHidden()
+    assert rows["later"][1].text() == "⏱ later · once · next in 0:45"
+    assert rows["watch_sample"][1].text() == "⏱ watch sample · every 3 min · next in 3:00"
+    rows["later"][0].findChild(QPushButton).click()
+    assert [s["name"] for s in scheduler.listing()] == ["watch_sample"]
+    assert "The schedule 'later' is cancelled." in window.transcript.toPlainText()
+    assert list(window.schedule_rows.rows) == ["watch_sample"]
+
+
+def test_a_wait_continues_the_request_as_a_machine_turn(qtbot, open_window):
+    steps = [("wait", {"seconds": 60}), "Waiting a minute.", ("get_status", {}), "Continued."]
+    window = open_window(*steps)
+    ask(qtbot, window, "wait a minute, then tell me the status")
+    microscope = window.conversation.microscope
+    assert not window.request_bar.isHidden()
+    assert window.request_bar.label.text().startswith("Request 1: 1 turns")
+    assert "waiting 1:00" in window.request_bar.label.text()
+    microscope.scheduler.clock = lambda: time.time() + 61  # a minute passes
+    qtbot.waitUntil(lambda: "Continued." in window.transcript.toPlainText(), timeout=10000)
+    transcript = window.transcript.toPlainText()
+    assert "↻ Request 1 continues: waited 6" in transcript
+    assert transcript.index("Waiting a minute.") < transcript.index("Request 1 continues")
+    assert microscope.requests.open().turns == 2 and "you" not in transcript.split("Waiting")[1]
+
+
+def test_cancel_request_ends_the_wait(qtbot, open_window):
+    window = open_window(("wait", {"seconds": 60}), "Waiting.")
+    ask(qtbot, window, "wait a minute")
+    window.request_bar.cancel_button.click()
+    assert window.request_bar.isHidden()
+    assert window.conversation.microscope.requests.open() is None
+    assert "The request is cancelled" in window.transcript.toPlainText()
