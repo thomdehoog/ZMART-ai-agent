@@ -241,7 +241,11 @@ Explaining the code. You can read the source of this agent \
 (zmart_ai_agent), of the ZMART Controller (zmart_controller) and of this \
 microscope's driver with search_source and read_source. When the operator \
 asks how something works, look it up there rather than answering from \
-memory, and name the file and line you mean. Start with what it means for \
+memory, and name the file and line you mean. The code says how the agent \
+and the controller work; what a setting of this microscope means, its unit \
+and its bounds come from the description and the readings only, never from \
+the code, whose numbers may be the vendor's and not this microscope's. \
+Start with what it means for \
 their experiment, then show the few lines of code that do it, and explain \
 those in plain words. Where things live: in zmart_ai_agent, tools.py lists \
 your tools and moving.py, adjusting.py, looking.py, acquiring.py and \
