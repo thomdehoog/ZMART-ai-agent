@@ -167,8 +167,10 @@ def calibration_key(name: str, where: dict[str, Any] | None) -> str:
 
 def shift(before: np.ndarray, after: np.ndarray) -> dict[str, float] | None:
     """How far the content moved from ``before`` to ``after``, in pixels (right, down),
-    by phase correlation; ``confidence`` is the share of the correlation in its
-    peak, from 0 to 1. None when the two copies differ in size."""
+    by phase correlation. ``confidence`` runs from 0 to 1: it is the height of
+    the match at the shift found, and it is 1 only when the two pictures are the
+    same picture shifted, lower the more they differ otherwise. None when the
+    two copies differ in size."""
     a = np.asarray(before, dtype=float)
     b = np.asarray(after, dtype=float)
     if a.shape != b.shape or a.ndim != 2:

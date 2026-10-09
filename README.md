@@ -183,8 +183,10 @@ settings), an optional label, and the measured numbers. The numbers that matter 
 how bright and how sharp the image is, where the bright signal sits and how far that is from the
 centre, in pixels and, when the driver reports its pixel size, in micrometres, and
 `centre_move_um`: the stage move in x and y that would bring the signal to the centre. That move
-follows from the frame rule above, so it needs nothing set up. A look can name earlier frames
-(*last 3*, *1,7*, *3-10*): the eyes are shown them with the new one, and the answer measures how
+follows from the frame rule above, so it needs nothing set up.
+
+A look can name earlier frames
+(*last 3*, *1,7*, *3-10*, or a label): the eyes are shown them with the new one, and the answer measures how
 far the picture shifted between them (by phase correlation, a standard way of finding the shift
 between two pictures of the same scene) and how the sharpness and the brightness changed. A
 label (*before*) finds a frame again. The microscope state carries the frames in brief and a

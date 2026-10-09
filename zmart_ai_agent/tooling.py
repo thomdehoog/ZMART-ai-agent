@@ -94,7 +94,8 @@ def guarded_tool(fn: Callable) -> Callable:
     microscope fails, a full disk) a failure the agent can explain,
     instead of ending the turn with a crash. Pydantic AI's ModelRetry, which
     hands a malformed call back to the model, passes through unchanged. A
-    tool that acts ends its answer with what changed (``with_changes``).
+    tool that acts ends its answer with ``state_changed``, what changed (see
+    ``with_changes``).
     """
     name = fn.__name__
 
