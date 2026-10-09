@@ -41,7 +41,8 @@ from .settings import CLOCK_FORMAT, SCHEDULE_MIN_SECONDS, SCHEDULES_MAX
 
 
 def hms(seconds: float) -> str:
-    """A moment on the agent's clock (seconds since the epoch) as a time of day, HH:MM:SS."""
+    """A moment on the agent's clock (a count of seconds, as Python keeps time) as a
+    time of day, HH:MM:SS."""
     return time.strftime(CLOCK_FORMAT, time.localtime(seconds))
 
 

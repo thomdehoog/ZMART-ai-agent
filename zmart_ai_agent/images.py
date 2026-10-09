@@ -234,9 +234,15 @@ def sharpness(data: np.ndarray) -> float:
         + small[1:-1, 2:]
         - 4 * small[1:-1, 1:-1]
     )
+    # The camera noise, from the differences between neighbouring pixels: their
+    # typical size (the median of their absolute values) times 1.4826 is the
+    # standard deviation for noise that is bell-shaped, and a difference of two
+    # noisy pixels is sqrt(2) times noisier than one.
     across = np.diff(small, axis=1)
     noise = 1.4826 * float(np.median(np.abs(across - np.median(across)))) / np.sqrt(2)
-    energy = float(np.mean(laplacian**2)) - 20 * noise**2  # a Laplacian of noise alone: 20 times
+    # The Laplacian above sums five pixels with weights 1, 1, 1, 1 and -4, so on
+    # noise alone its squared mean is 1 + 1 + 1 + 1 + 16 = 20 times the noise squared.
+    energy = float(np.mean(laplacian**2)) - 20 * noise**2
     signal = float(np.mean(np.clip(small - np.percentile(small, 10), 0, None)))
     return round(max(energy, 0.0) / signal**2, 4) if signal > 0 else 0.0
 

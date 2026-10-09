@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 from pydantic_ai import RunContext
 
-from .frames import FrameHistory, direction, field_um, flag, nominal_scale, shift
+from .frames import FrameHistory, direction, flag, nominal_scale, shift
 from .images import image_statistics, read_saved, saved_files, small_copy
 from .instructions import FAILURE_ADVICE
 from .microscope import Microscope
@@ -63,9 +63,17 @@ async def look(
     Args:
         question: what to find out, e.g. "what do you see?", "is it in focus?",
             "is it sharper than frame 3?".
-        frames: earlier frames to show with the new one: "last 3", "1,7" or "3-10".
+        frames: earlier frames to show with the new one: "last 3" (the three
+            before this one), "1,7", "3-10", or a label such as "before".
         label: a short name for the new frame, to find it again: "before".
     """
+    history = ctx.deps.frames
+    # The earlier frames are picked before the picture is taken, so a slip in
+    # naming them costs no acquisition, and "last 3" means the three before this one.
+    try:
+        shown = history.pick(frames) if frames is not None else []
+    except ValueError as exc:
+        return refusal(ctx, "invalid", str(exc), FAILURE_ADVICE)
     stamp = f"{datetime.fromtimestamp(ctx.deps.now()):%Y%m%d_%H%M%S}"
     answer = await asyncio.to_thread(
         ctx.deps.call, "acquire", position_label=f"{LOOK_LABEL}_{stamp}"
@@ -79,15 +87,9 @@ async def look(
         error = {"code": "unreadable", "message": str(exc), "advice": FAILURE_ADVICE}
         return {"files": files, "error": error}
     stats = image_statistics(image)
-    history = ctx.deps.frames
     fresh = history.add(small_copy(image), stats, "look", _where(ctx.deps), label)
     ctx.deps.on_image(image, question)
-    try:
-        shown = history.pick(frames) if frames is not None else []
-    except ValueError as exc:
-        return refusal(ctx, "invalid", str(exc), FAILURE_ADVICE)
-    if all(f is not fresh for f in shown):
-        shown.append(fresh)
+    shown.append(fresh)
     result: dict[str, Any] = {
         "frame": history.placing(fresh),
         "statistics": stats,
@@ -140,8 +142,7 @@ async def calibrate(ctx: RunContext[Microscope], step_um: float | None = None) -
             left out.
     """
     microscope = ctx.deps
-    where = _where(microscope)
-    field = field_um(where.get("observed"), _image_shape(microscope))
+    field = _last_field(microscope)
     step = float(
         step_um or (round(CALIBRATE_STEP_FRACTION * field[0]) if field else CALIBRATE_STEP_UM)
     )
@@ -152,7 +153,7 @@ async def calibrate(ctx: RunContext[Microscope], step_um: float | None = None) -
     if (question := needs_go_ahead(ctx, f"calibrate {step:g}", summary)) is not None:
         return question
     try:
-        report = await asyncio.to_thread(_calibrate, microscope, step, field)
+        report = await asyncio.to_thread(_calibrate, microscope, step)
     except ValueError as exc:  # the driver refused a move, or the pictures told nothing
         return refusal(ctx, "invalid", str(exc), FAILURE_ADVICE)
     if "error" in report:
@@ -160,23 +161,32 @@ async def calibrate(ctx: RunContext[Microscope], step_um: float | None = None) -
     return report
 
 
-def _calibrate(microscope: Microscope, step: float, field: tuple[float, float] | None) -> dict:
+def _calibrate(microscope: Microscope, step: float) -> dict:
     """The measuring itself, on a thread: four images around three moves, and the
     picture shifts between them by phase correlation. Returns the report, or
-    {"error": ...} when a shift could not be measured."""
+    {"error": ...} when a shift could not be measured. Whatever happens at a
+    moved position, the stage is brought back to where it started.
+    """
     history = microscope.frames
     start = _snap(microscope, "calibrate")
     if (why := flag(start)) is not None:
         return {
-            "error": f"frame {start['n']}: {why}; calibrate needs a visible sample that is not saturated"
+            "error": (
+                f"frame {start['n']}: {why}; calibrate needs a visible sample that is not saturated"
+            )
         }
     here = start["position"]
-    rows, report, used = [], {"step_um": step, "frames": [start["n"]]}, []
+    # The field of view in micrometres of the full picture, when the driver reports
+    # its pixel size; the frame keeps it, measured on the full image, not on its copy.
+    field = start["field_um"]
+    rows, report = [], {"step_um": step, "frames": [start["n"]]}
     for axis in ("x", "y"):
         moved = {**here, axis: here[axis] + step}
-        microscope.call("set_xyz", moved["x"], moved["y"], moved["z"])
-        after = _snap(microscope, "calibrate")
-        microscope.call("set_xyz", here["x"], here["y"], here["z"])
+        try:
+            _go(microscope, moved)
+            after = _snap(microscope, "calibrate")
+        finally:  # back to the start, even when the move or the picture failed
+            _go(microscope, here)
         report["frames"].append(after["n"])
         found = shift(start["image"], after["image"])
         if found is None or found["confidence"] < CALIBRATE_CONFIDENCE_MIN:
@@ -189,20 +199,35 @@ def _calibrate(microscope: Microscope, step: float, field: tuple[float, float] |
         right, down = found["right"] / width / step, found["down"] / height / step
         rows.append([right, down])
         axis_report = {"content_moves": direction(right, down), "confidence": found["confidence"]}
-        if field is not None:  # 1 when the pixel size the driver reports is right
+        if field is not None:
+            # How far the content moved on the sample, in micrometres, per micrometre
+            # of stage move: 1 when the pixel size the driver reports is right.
             moved_um = (found["right"] * field[0] / width, found["down"] * field[1] / height)
             axis_report["picture_um_per_stage_um"] = round(float(np.hypot(*moved_um)) / step, 3)
         report[axis] = axis_report
     nominal = nominal_scale(field)
-    report["follows_the_frame_rule"] = nominal is not None and all(
-        direction(*rows[i]) == direction(*nominal[i]) for i in range(2)
-    )
+    if nominal is not None:  # only a driver that reports its pixel size can be checked
+        report["follows_the_frame_rule"] = all(
+            direction(*rows[i]) == direction(*nominal[i]) for i in range(2)
+        )
     history.calibration.store(start["calibration"], rows, hms(microscope.now()), step)
     report["kept_as"] = start["calibration"]
     report["note"] = (
         "kept for this microscope and objective; the frames' centre_move_um and the map use it now"
     )
     return report
+
+
+def _go(microscope: Microscope, position: dict[str, float]) -> None:
+    """One move of the calibration; a ValueError when the driver did not confirm it.
+
+    A move the driver could not confirm leaves the stage somewhere unknown, and
+    a shift measured from there would be kept as the calibration, so it stops
+    the measurement instead.
+    """
+    answer = microscope.call("set_xyz", position["x"], position["y"], position["z"])
+    if not answer.get("success"):
+        raise ValueError(f"the move to {position} could not be confirmed: {answer.get('content')}")
 
 
 def _snap(microscope: Microscope, source: str) -> dict[str, Any]:
@@ -218,12 +243,15 @@ def _snap(microscope: Microscope, source: str) -> dict[str, Any]:
     )
 
 
-def _image_shape(microscope: Microscope) -> list[int]:
-    """The size of the pictures this microscope takes, from the last frame, or unknown."""
+def _last_field(microscope: Microscope) -> tuple[float, float] | None:
+    """The field of view in micrometres, from the last frame taken with the objective
+    in use, to size calibrate's test move; None before the first frame, after a
+    change of objective, or when the driver does not report its pixel size."""
     frames = microscope.frames.frames
-    if frames and frames[-1].get("image") is not None:
-        return [int(frames[-1]["image"].shape[0]), int(frames[-1]["image"].shape[1])]
-    return []
+    if not frames:
+        return None
+    objective = (_where(microscope).get("observed") or {}).get("objective")
+    return frames[-1]["field_um"] if frames[-1].get("objective") == objective else None
 
 
 def eyes_text(history: FrameHistory, entry: dict[str, Any]) -> str:

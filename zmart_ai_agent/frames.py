@@ -88,20 +88,30 @@ def field_um(observed: dict[str, Any] | None, shape: list[int]) -> tuple[float, 
 
 
 def nominal_scale(field: tuple[float, float] | None) -> list[list[float]] | None:
-    """How a stage move shows in the picture under the ZMART frame rule: for a move
-    of one micrometre on x, then on y, the fraction of the picture's width the
-    content moves right and of its height it moves down. Moving the stage +x
-    carries the field of view to +x, so the content moves left. None without
-    the field of view in micrometres."""
+    """How a stage move shows in the picture under the ZMART frame rule.
+
+    The answer is a small table with one row for a move of one micrometre in
+    x and one for a move of one micrometre in y. Each row gives the fraction
+    of the picture's width the content moves to the right and the fraction of
+    its height it moves down. Under the rule, moving the stage +x carries the
+    field of view to +x on the sample, so the content moves left; +y carries
+    it down, so the content moves up. None when the field of view in
+    micrometres is not known.
+    """
     if field is None:
         return None
     return [[-1.0 / field[0], 0.0], [0.0, -1.0 / field[1]]]
 
 
 def centre_move(offset: tuple[float, float], scale: list[list[float]]) -> dict[str, float] | None:
-    """The x and y move (um) that brings a signal at ``offset`` (fractions of the
-    picture right of and below its centre) to the centre, under ``scale`` (see
-    ``nominal_scale``): the move whose shift cancels the offset."""
+    """The x and y move, in micrometres, that brings a signal to the centre.
+
+    ``offset`` is where the signal sits, as fractions of the picture right of
+    and below its centre. ``scale`` says how the picture moves per micrometre
+    of stage move (see ``nominal_scale``). The move is the one whose shift
+    cancels the offset. None when ``scale`` says the picture does not move at
+    all, since then no move can centre anything.
+    """
     matrix = np.array(scale, dtype=float).T  # columns: the picture shift per um of x and of y
     try:
         move = np.linalg.solve(matrix, -np.array(offset, dtype=float))
@@ -246,14 +256,18 @@ class FrameHistory:
             return entry
 
     def pick(self, chosen: Any) -> list[dict[str, Any]]:
-        """The frames ``chosen`` names: "last 3", "1,7", "3-10", a count or a list of
-        numbers; at most LOOK_FRAMES_MAX. A ValueError says what is wrong, naming
-        the numbers the history holds."""
+        """The frames ``chosen`` names: "last 3", "1,7", "3-10", a label such as
+        "before", a count or a list of numbers and labels; at most LOOK_FRAMES_MAX.
+        A ValueError says what is wrong, naming the numbers and labels the
+        history holds."""
         with self._lock:
             frames = list(self.frames)
         by_number = {f["n"]: f for f in frames}
+        labels = {f["label"]: f["n"] for f in frames if f.get("label")}
         held = f"{frames[0]['n']} to {frames[-1]['n']}" if frames else "none"
-        chosen = _wanted(chosen)
+        if labels:
+            held += f", labelled {', '.join(repr(label) for label in labels)}"
+        chosen = _wanted(chosen, labels)
         if isinstance(chosen, int):
             picked = frames[-chosen:] if chosen > 0 else []
         elif isinstance(chosen, tuple):
@@ -337,26 +351,39 @@ class FrameHistory:
             self.frames, self._count = [], 0
 
 
-def _wanted(chosen: Any) -> int | tuple[int, int] | list[int]:
+WRONG_FRAMES = "frames is 'last 3', a list of frame numbers or labels, or a range like '3-10'"
+
+
+def _wanted(chosen: Any, labels: dict[str, int]) -> int | tuple[int, int] | list[int]:
     """``frames`` as the model gives it, in one of three shapes: a count (the last
-    so many), a range, or a list of frame numbers."""
+    so many), a range, or a list of frame numbers; a label stands for its frame's
+    number. A plain number alone is a count ("3" is "last 3"), so a label that is
+    only digits cannot be named this way."""
     if isinstance(chosen, bool):
-        raise ValueError("frames is 'last 3', a list of frame numbers, or a range like '3-10'")
+        raise ValueError(WRONG_FRAMES)
     if isinstance(chosen, int):
         return chosen
     if isinstance(chosen, str):
-        text = chosen.strip().lower()
-        if last := re.fullmatch(r"(?:last\s*)?(\d+)", text):
+        text = chosen.strip()
+        if last := re.fullmatch(r"(?:last\s*)?(\d+)", text.lower()):
             return int(last.group(1))
         if span := re.fullmatch(r"(\d+)\s*-\s*(\d+)", text):
             return int(span.group(1)), int(span.group(2))
-        if re.fullmatch(r"\d+(\s*,\s*\d+)+", text):
-            return [int(n) for n in text.split(",")]
-    if isinstance(chosen, list) and all(
-        isinstance(n, int) and not isinstance(n, bool) for n in chosen
-    ):
-        return list(chosen)
-    raise ValueError("frames is 'last 3', a list of frame numbers, or a range like '3-10'")
+        chosen = [part.strip() for part in text.split(",")]
+    if isinstance(chosen, list):
+        numbers = []
+        for item in chosen:
+            if isinstance(item, int) and not isinstance(item, bool):
+                numbers.append(item)
+            elif isinstance(item, str) and item.strip().isdigit():
+                numbers.append(int(item))
+            elif isinstance(item, str) and item.strip() in labels:
+                numbers.append(labels[item.strip()])
+            else:
+                raise ValueError(f"no frame is labelled {item!r}; {WRONG_FRAMES}")
+        if numbers:
+            return numbers
+    raise ValueError(WRONG_FRAMES)
 
 
 def _bytes(entry: dict[str, Any]) -> int:
@@ -499,9 +526,10 @@ def _place(usable: list[dict[str, Any]], now: float) -> dict[str, Any] | None:
 
 def _focus(usable: list[dict[str, Any]], now: float) -> dict[str, Any] | None:
     """The best focus from the frames at the newest frame's place (within
-    MAP_SAME_PLACE_UM in x and y): the top of a parabola through the sharpest
-    frame and its neighbours in z, with half their spacing as the uncertainty.
-    At the edge of the frames' range, the edge, and which way to search."""
+    MAP_SAME_PLACE_UM in x and y): the top of a parabola, the smooth curve
+    through the sharpest frame and its two neighbours in z, with half their
+    spacing as the uncertainty. When the sharpest frame is at the edge of the
+    frames' range, the answer is that edge, and which way to search further."""
     if not usable or usable[-1]["position"]["z"] is None:
         return None
     here = usable[-1]["position"]

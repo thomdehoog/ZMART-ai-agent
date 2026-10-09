@@ -266,7 +266,7 @@ messages it keeps the newest 10.
 This is a release candidate. It is a port of the Nikon chat assistant onto the ZMART
 Controller, with the newer ideas of the mesoSPIM assistant folded in (see below), and so far it
 has been tried on the controller's mock microscope only, not yet on a real one. The offline
-tests pass (169). The evaluation with a real model was last run before the frames, the
+tests pass (172). The evaluation with a real model was last run before the frames, the
 calibration and the requests were added; its cases still hold, and the next run with Gemini
 3.5 Flash-Lite will say how that model takes to the new tools.
 

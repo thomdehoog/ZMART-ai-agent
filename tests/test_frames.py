@@ -144,11 +144,17 @@ def test_frames_are_picked_by_count_list_or_range():
     assert [f["n"] for f in history.pick("2-3")] == [2, 3]
     assert [f["n"] for f in history.pick([4, 1])] == [4, 1]
     assert [f["n"] for f in history.pick(3)] == [2, 3, 4]
-    with pytest.raises(ValueError, match="no frame 9; the history holds 1 to 4"):
+    kept(history, disc(32, 60), label="before")
+    assert [f["n"] for f in history.pick("before")] == [5]  # a label finds a frame again
+    assert [f["n"] for f in history.pick("1, before")] == [1, 5]
+    assert [f["n"] for f in history.pick([2, "before"])] == [2, 5]
+    with pytest.raises(ValueError, match="no frame 9; the history holds 1 to 5, labelled 'before'"):
         history.pick("1,9")
-    with pytest.raises(ValueError, match="frames is 'last 3'"):
+    with pytest.raises(ValueError, match="no frame is labelled 'yesterday'; frames is 'last 3'"):
         history.pick("yesterday")
-    for col in range(LOOK_FRAMES_MAX):
+    with pytest.raises(ValueError, match="frames is 'last 3'"):
+        history.pick(True)
+    for _ in range(LOOK_FRAMES_MAX):
         kept(history, disc(32, 48))
     with pytest.raises(ValueError, match=f"at most {LOOK_FRAMES_MAX}"):
         history.pick(f"1-{LOOK_FRAMES_MAX + 1}")
@@ -250,6 +256,9 @@ def test_calibrate_measures_how_the_picture_moves_and_is_agreed_first(microscope
     report = tool_results(conversation)[-1]
     assert report["frames"] == [1, 2, 3] and report["follows_the_frame_rule"] is False
     assert report["x"]["content_moves"] == "up" and report["y"]["content_moves"] == "left"
+    # the mock reports its pixel size truly, so the content moves as far as the stage
+    assert report["x"]["picture_um_per_stage_um"] == pytest.approx(1.0, abs=0.05)
+    assert report["y"]["picture_um_per_stage_um"] == pytest.approx(1.0, abs=0.05)
     assert report["kept_as"] == "mock_microscope/10x/0.30 Air"
     assert position(microscope) == {"x": 0.0, "y": 0.0, "z": 0.0}  # back where it started
     assert microscope.frames.calibration.scale(report["kept_as"]) is not None
@@ -284,3 +293,61 @@ def test_calibrate_refuses_a_picture_without_a_sample(microscope, monkeypatch):
     error = tool_results(conversation)[-1]["error"]
     assert error["code"] == "invalid" and "no signal" in error["message"]
     assert position(microscope) == {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
+def test_calibrate_brings_the_stage_back_when_a_picture_fails(microscope, monkeypatch):
+    from mock_microscope import MOCK_OPS
+
+    original, taken = MOCK_OPS["acquire"], []
+
+    def second_fails(handle, **kwargs):
+        taken.append(kwargs["position_label"])
+        if len(taken) == 2:  # the picture at the moved position
+            raise RuntimeError("the camera did not answer")
+        return original(handle, **kwargs)
+
+    monkeypatch.setitem(MOCK_OPS, "acquire", second_fails)
+    steps = [("calibrate", {"step_um": 5}), "Shall I?", ("calibrate", {"step_um": 5}), "Sorry."]
+    conversation, _ = talk(microscope, *steps)
+    conversation.send("calibrate")
+    conversation.send("yes")
+    error = tool_results(conversation)[-1]["error"]
+    assert error["code"] == "failed" and "camera did not answer" in error["message"]
+    assert position(microscope) == {"x": 0.0, "y": 0.0, "z": 0.0}  # not left 5 um out
+    assert microscope.frames.calibration.scale("mock_microscope/10x/0.30 Air") is None
+
+
+def test_calibrate_stops_at_a_move_the_driver_could_not_confirm(microscope, monkeypatch):
+    from mock_microscope import MOCK_OPS
+
+    monkeypatch.setitem(
+        MOCK_OPS,
+        "set_xyz",
+        lambda handle, *args, **kwargs: {"success": False, "content": "the stage did not answer"},
+    )
+    steps = [("calibrate", {}), "Shall I?", ("calibrate", {}), "No."]
+    conversation, _ = talk(microscope, *steps)
+    conversation.send("calibrate")
+    conversation.send("yes")
+    error = tool_results(conversation)[-1]["error"]
+    assert error["code"] == "invalid" and "the stage did not answer" in error["message"]
+    assert microscope.frames.calibration.scale("mock_microscope/10x/0.30 Air") is None
+
+
+def test_a_look_names_earlier_frames_by_count_or_label_before_it_takes_the_picture(microscope):
+    look = ("look", {"question": "what?"})
+    steps = [
+        ("look", {"question": "what?", "label": "start"}),
+        look,
+        look,
+        ("look", {"question": "and now?", "frames": "last 2"}),  # the two before this one
+        ("look", {"question": "since the start?", "frames": "start"}),  # by its label
+        ("look", {"question": "what?", "frames": "yesterday"}),  # refused, no picture taken
+        "Done.",
+    ]
+    conversation, _ = talk(microscope, *steps)
+    conversation.send("look around")
+    results = tool_results(conversation)
+    assert [f["n"] for f in results[3]["frames"]] == [2, 3, 4]
+    assert [f["n"] for f in results[4]["frames"]] == [1, 5]
+    assert results[5]["error"]["code"] == "invalid" and len(microscope.images) == 5
